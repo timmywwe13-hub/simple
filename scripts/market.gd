@@ -7,6 +7,8 @@ extends Interactable
 const PREMIUM := 1.15
 
 var list: ItemList
+var panel_scroll: ScrollContainer
+var scroll_pos := 0
 
 
 func art_height() -> float:
@@ -22,9 +24,18 @@ func interact() -> void:
 		return
 	var s := TownUI.screen(town.ui_layer, "FISH MARKET")
 	var body: VBoxContainer = s["body"]
+	panel_scroll = s["scroll"] as ScrollContainer
+	if panel_scroll != null:
+		panel_scroll.scroll_vertical = scroll_pos
+		panel_scroll.set_deferred("scroll_vertical", scroll_pos)
 	s["coins"].text = "COINS %d" % GameState.coins
-	var intro := UILib.label(body, "SELL YOUR CATCH - MARKET PREMIUM +15%%, BOAT BONUS INCLUDED", 14, Color("#a8c0cc"))
+	var intro := UILib.label(body, "SELL YOUR CATCH - MARKET +15%%, BOAT BONUS, DAILY DEMAND AND STREAK BONUSES INCLUDED", 14, Color("#a8c0cc"))
 	intro.custom_minimum_size = Vector2(0.0, 24.0)
+	var daily_id := GameState.daily_fish_id()
+	if daily_id != "":
+		var daily_l := UILib.label(body, "DAILY CATCH: %s PAYS x2   |   HOT DEMAND PAYS +30%%" % String(FishDB.fish_data(daily_id).get("name", daily_id)).to_upper(),
+				13, GameTheme.GOLD)
+		daily_l.custom_minimum_size = Vector2(0.0, 22.0)
 	list = ItemList.new()
 	list.custom_minimum_size = Vector2(600.0, 210.0)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -55,7 +66,8 @@ func _bucket_value() -> int:
 	for item in GameState.inventory:
 		var fid := String(item.get("fish_id", ""))
 		var w := float(item.get("weight", 0.0))
-		total += int(round(GameState.coin_value(fid, w) * _mult()))
+		var perfect := bool(item.get("perfect", false))
+		total += GameState.sale_value(fid, w, _mult(), perfect)
 	return total
 
 
@@ -70,8 +82,17 @@ func _refresh_list() -> void:
 		var fid := String(item.get("fish_id", ""))
 		var w := float(item.get("weight", 0.0))
 		var f := FishDB.fish_data(fid)
-		var value := int(round(GameState.coin_value(fid, w) * _mult()))
-		var idx := list.add_item("%s  %.2f KG  -  %d COINS" % [String(f.get("name", fid)), w, value])
+		var perfect := bool(item.get("perfect", false))
+		var value := GameState.sale_value(fid, w, _mult(), perfect)
+		var tags: Array[String] = []
+		if perfect:
+			tags.append("PERFECT")
+		if GameState.is_daily_catch(fid):
+			tags.append("DAILY x2")
+		if GameState.is_hot_demand(fid):
+			tags.append("HOT +30%")
+		var tag_txt := "" if tags.is_empty() else "  [%s]" % " ".join(tags)
+		var idx := list.add_item("%s  %.2f KG  -  %d COINS%s" % [String(f.get("name", fid)), w, value, tag_txt])
 		list.set_item_custom_fg_color(idx, GameTheme.get_rarity_color(String(f.get("rarity", "Common"))))
 
 
@@ -99,6 +120,8 @@ func _on_sell_all() -> void:
 
 
 func _reopen() -> void:
+	if is_instance_valid(panel_scroll):
+		scroll_pos = panel_scroll.scroll_vertical
 	town.close_panel()
 	interact()
 

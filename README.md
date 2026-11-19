@@ -23,7 +23,8 @@ A simple, polished 2D fishing game with a collection-and-progression loop, built
 | Return from Open Water | sail west past the edge |
 | Switch fishing spot | `1`–`4` |
 | Open the Fish Index | `I` (from the menu or right on the water) |
-| Back / menu | `Escape` |
+| Pause / back | `Escape` (pauses while fishing; closes menus) |
+| Stats and sound | menu button `STATS & SOUND` |
 | Quit | close window |
 
 **On touchscreens** (phones/tablets) an on-screen pad and buttons appear:
@@ -36,11 +37,11 @@ menu, and multi-touch works.
 
 1. **Cast** — aim with the mouse, press `SPACE`/click to cast the bobber.
 2. **Wait for a bite** — a `!` indicator flashes over the bobber with a bite sound. Click quickly to hook.
-3. **Reel** — small fish: timing bar (press in the green zone). Big fish: physics tug-of-war (hold `SPACE` to reel in and keep the tension marker in the green band).
-4. **Catch popup** — fish name, weight, rarity, coin value, plus a `NEW SPECIES!` badge on first catch.
-5. **Sell / Index** — open the Fish Index (`I`, also mid-fishing: collection log with silhouettes until caught) or the Tackle Shop (sell all fish for coins).
-6. **Upgrade** — buy better rods (faster reeling, wider timing window), lines (fewer escapes), bait (attracts rarer fish), and bigger buckets (more inventory).
-7. **Progress** — unlock the River, Lake, and Deep Sea regions by coins; each has its own fish table. Day/night cycle changes which fish appear.
+3. **Reel** — small fish: timing bar (press in the green zone; the gold centre is a perfect catch for +15%). Big fish: physics tug-of-war (hold `SPACE` to reel in and keep the tension marker in the green band).
+4. **Catch popup** — fish name, weight, rarity, coin value, plus a `NEW SPECIES!` badge on first catch and tags for perfect / daily / hot-demand bonuses.
+5. **Sell / Index** — open the Fish Index (`I`, also mid-fishing: collection log with silhouettes until caught, plus region and uncaught filters) or the Tackle Shop (sell all fish for coins).
+6. **Upgrade** — buy better rods (faster reeling, wider timing window), lines (fewer escapes), bait (attracts rarer fish), lanterns (faster night bites), and bigger buckets (more inventory).
+7. **Progress** — unlock the River, Lake, and Deep Sea regions by coins; each has its own fish table. Day/night, weather, daily catches and daily market demand change which fish are worth chasing.
 
 ## Save system
 
@@ -60,10 +61,27 @@ res://scripts/touch_controls.gd # On-screen touch controls for phones/tablets
 res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 ```
 
+## Updates (v1.5)
+
+- **6 new fish (48 species total)** - Sunrise Bream and Dawn Gar bite only by day, Moonfin Eel and Ghost Carp only at night, and Mist Herring / Thunderhead Grouper only in rain or storms. Fish pools now filter by hour as well as weather
+- **Lantern gear** - No Lantern, Oil Lamp and Storm Lantern; better lanterns speed up night bites and make rare night fish more likely. Equipped lanterns cast a warm light around the fisher after dark
+- **New gear tiers** - Carbon Rod (3.2x reel, 0.42 window), Fluorocarbon Line (94% keep) and Deck Cooler (72 fish)
+- **Moon Bait and Storm Bait** - Moon Bait boosts night rarity odds; Storm Bait boosts fish in rain and thunderstorms
+- **Perfect catches** - hit the gold centre of the timing bar for a 15% value bonus (the tug-of-war can earn one too)
+- **Catch streaks** - land fish back to back for up to +20% sale value; an escape or monster shock resets the streak
+- **Daily catch & hot demand** - one species pays double each real day, and two species are in demand for +30%. Both rotate by date and are shown in the HUD and Fish Market
+- **Weather forecast** - the HUD shows the next front and how long until it arrives
+- **Stats screen** - lifetime catches, coins earned, fish sold, perfect catches, streaks, biggest fish, species completion and today's daily/hot fish
+- **Fish Index filters** - cycle region filters and hide already-caught species
+- **Pause menu** - ESC now pauses instead of dropping an active cast; resume, toggle sound or return to the menu
+- **Persistent sound setting** - mute is saved with the rest of the progress
+- **4 new quests (25 total)** - night catches, bad-weather catches, perfect catches and a 6-catch streak
+- **Fixes** - town shops keep their scroll position after buying or claiming, the General Store can switch owned bait for free, bucket capacity reads shop data, and catch/market values include all bonuses
+
 ## Updates (v1.4)
 
-- **Volt Serpent & weather (42 species total)** - a roaming Legendary Volt Serpent can bite in any water; 95% of the time it goes in the bucket to keep and sell, but 5% of the time it shocks you for 20 coins and escapes. Rain and thunderstorms now roll in on a timer with slanted rain, splashes, lightning and thunder, faster bites, and weather-only fish (Rain Dace in the rain; Rainbow Trout, Thunder Pike and Storm Herring in the wet weather). The HUD shows the current weather
-- **20 new fish (42 species total)** - Bluegill, Golden Koi, Dusky Carp, Puddle Puffer, Rainbow Darter, Emerald Eel, Northern Pike, Crimson Gar, Kelp Grouper, Tiger Muskie, Lake Sturgeon, Opaline Cichlid, Hammerhead Shark, Manta Ray, Deep Sea Angler, Viperfish, Goblin Shark, Giant Oarfish, Wahoo and Sailfish, plus the weather/roaming additions above, across all five waters. New body shapes (puffer, shark, ray, deep-sea, ribbon, serpent), new patterns (checker, speckle, scales, glow veins, lightning) and species features (whiskers, bills, sails, spikes, fangs, lanterns, wings, crests, streamers, hammerhead bar) make every fish read as itself - including whiskers on the catfish and arowana, a bill on the marlin and swordfish, and a lantern on the lanternfish
+- **Volt Serpent & weather (42 species at the time)** - a roaming Legendary Volt Serpent can bite in any water; 95% of the time it goes in the bucket to keep and sell, but 5% of the time it shocks you for 20 coins and escapes. Rain and thunderstorms now roll in on a timer with slanted rain, splashes, lightning and thunder, faster bites, and weather-only fish (Rain Dace in the rain; Rainbow Trout, Thunder Pike and Storm Herring in the wet weather). The HUD shows the current weather
+- **20 new fish (42 species at the time)** - Bluegill, Golden Koi, Dusky Carp, Puddle Puffer, Rainbow Darter, Emerald Eel, Northern Pike, Crimson Gar, Kelp Grouper, Tiger Muskie, Lake Sturgeon, Opaline Cichlid, Hammerhead Shark, Manta Ray, Deep Sea Angler, Viperfish, Goblin Shark, Giant Oarfish, Wahoo and Sailfish, plus the weather/roaming additions above, across all five waters. New body shapes (puffer, shark, ray, deep-sea, ribbon, serpent), new patterns (checker, speckle, scales, glow veins, lightning) and species features (whiskers, bills, sails, spikes, fangs, lanterns, wings, crests, streamers, hammerhead bar) make every fish read as itself - including whiskers on the catfish and arowana, a bill on the marlin and swordfish, and a lantern on the lanternfish
 - **Bait is now a real consumable** - buy bait packs (Worm / Minnow / Glow) at the Tackle Shop or the General Store; each pack holds several casts and every cast uses one. Rare fish barely bite without it (their odds are cut hard when fishing bare) and matching bait boosts them instead, so rare fish means a trip to the shop. The HUD shows the equipped bait and casts left
 - **15 new quests (21 total)** - bait shopping, baited casts, night catches, a 15 kg trophy, Rare/Epic/Legendary hunts, per-region catch quests (River, Lake, Deep Sea, Open Water), 10/25-species discovery, and sales milestones; claim them all at the Quest Board in Town. Fixed: quest progress for string targets (rarity/region) used to compare against the wrong number, so some quests completed instantly
 - **Rare fish fight harder** - Rare / Epic / Legendary catches shrink the green timing zone and the safe tension band a little, and reel tension builds faster

@@ -7,6 +7,9 @@ extends Interactable
 func art_height() -> float:
 	return 118.0
 
+var panel_scroll: ScrollContainer
+var scroll_pos := 0
+
 
 func prompt_label() -> String:
 	var n := GameState.quest_unclaimed_count()
@@ -18,6 +21,10 @@ func interact() -> void:
 		return
 	var s := TownUI.screen(town.ui_layer, "QUEST BOARD")
 	var body: VBoxContainer = s["body"]
+	panel_scroll = s["scroll"] as ScrollContainer
+	if panel_scroll != null:
+		panel_scroll.scroll_vertical = scroll_pos
+		panel_scroll.set_deferred("scroll_vertical", scroll_pos)
 	s["coins"].text = "COINS %d" % GameState.coins
 	var intro := UILib.label(body, "FINISH QUESTS - RETURN HERE TO CLAIM REWARDS", 14, Color("#a8c0cc"))
 	intro.custom_minimum_size = Vector2(0.0, 24.0)
@@ -55,6 +62,8 @@ func _on_claim(qid: String) -> void:
 
 
 func _reopen() -> void:
+	if is_instance_valid(panel_scroll):
+		scroll_pos = panel_scroll.scroll_vertical
 	town.close_panel()
 	interact()
 

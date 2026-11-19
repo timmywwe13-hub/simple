@@ -344,6 +344,61 @@ static var FISH := {
 		"weight_kg": [1.0, 4.0], "coin": 190, "catch_rate": 0.4,
 		"desc": "Rides the storm swell in silver shoals.",
 	},
+	# --- Day / night specialists: they only bite at their own hour ---
+	"sunrise_bream": {
+		"id": "sunrise_bream", "name": "Sunrise Bream", "rarity": "Uncommon", "region": "pond",
+		"time": "day",
+		"shape": "round", "pattern": "bands",
+		"palette": {"body": "#e89a63", "belly": "#f7d9a8", "fin": "#c56a4a", "eye": "#141d27"},
+		"features": ["crest"],
+		"weight_kg": [0.2, 0.8], "coin": 34, "catch_rate": 0.5,
+		"desc": "Glows pink at first light, then hides for the day.",
+	},
+	"dawn_gar": {
+		"id": "dawn_gar", "name": "Dawn Gar", "rarity": "Rare", "region": "lake",
+		"time": "day",
+		"shape": "long", "pattern": "speckle",
+		"palette": {"body": "#7d9a72", "belly": "#e0ecc8", "fin": "#4d6b4d", "eye": "#d9b04c"},
+		"features": ["fangs"],
+		"weight_kg": [2.0, 8.0], "coin": 140, "catch_rate": 0.3,
+		"desc": "Patrols the reeds while the sun is up.",
+	},
+	"moonfin_eel": {
+		"id": "moonfin_eel", "name": "Moonfin Eel", "rarity": "Rare", "region": "river",
+		"time": "night",
+		"shape": "eel", "pattern": "glow_veins",
+		"palette": {"body": "#273b58", "belly": "#9fc8d8", "fin": "#1c2c46", "eye": "#e6f4ff"},
+		"features": ["lantern"],
+		"weight_kg": [0.8, 3.5], "coin": 120, "catch_rate": 0.35,
+		"desc": "A silver ribbon that only rises after moonrise.",
+	},
+	"ghost_carp": {
+		"id": "ghost_carp", "name": "Ghost Carp", "rarity": "Epic", "region": "lake",
+		"time": "night",
+		"shape": "round", "pattern": "scales",
+		"palette": {"body": "#c8d8e8", "belly": "#f2f7ff", "fin": "#8fa8c0", "eye": "#dfe9f5"},
+		"features": ["glow", "streamer"],
+		"weight_kg": [3.0, 12.0], "coin": 320, "catch_rate": 0.18,
+		"desc": "A pale shape under the moon - blink and it is gone.",
+	},
+	"mist_herring": {
+		"id": "mist_herring", "name": "Mist Herring", "rarity": "Rare", "region": "ocean",
+		"weather": "rain",
+		"shape": "minnow", "pattern": "sparkle",
+		"palette": {"body": "#8fb0c8", "belly": "#e8f4ff", "fin": "#5f86a8", "eye": "#141d27"},
+		"features": ["streamer"],
+		"weight_kg": [0.4, 1.8], "coin": 160, "catch_rate": 0.4,
+		"desc": "Schools in the grey rain-mist above the reef.",
+	},
+	"thunderhead_grouper": {
+		"id": "thunderhead_grouper", "name": "Thunderhead Grouper", "rarity": "Epic", "region": "ocean",
+		"weather": "storm",
+		"shape": "round", "pattern": "lightning",
+		"palette": {"body": "#37425f", "belly": "#b8cce0", "fin": "#232c44", "eye": "#ffe08a"},
+		"features": ["spikes", "fangs"],
+		"weight_kg": [8.0, 30.0], "coin": 380, "catch_rate": 0.3,
+		"desc": "Hides under the storm and hits like a wave.",
+	},
 }
 
 static func fish_data(fish_id: String) -> Dictionary:
@@ -361,9 +416,10 @@ static func all_ids() -> Array:
 	return FISH.keys()
 
 ## Everything that can bite at a spot: the region's own table plus the
-## roaming monsters (fish flagged "anywhere"), filtered by the weather -
-## a fish with a "weather" tag only bites in that weather.
-static func fish_pool(region: String, weather := "") -> Array[Dictionary]:
+## roaming monsters (fish flagged "anywhere"), filtered by the weather and
+## the hour. A fish with a "weather" tag only bites in that weather; one
+## with a "time" tag only bites by day or by night.
+static func fish_pool(region: String, weather := "", night := false) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for f in fish_by_region(region):
 		out.append(f)
@@ -374,6 +430,12 @@ static func fish_pool(region: String, weather := "") -> Array[Dictionary]:
 	var filtered: Array[Dictionary] = []
 	for f in out:
 		var need := String(f.get("weather", ""))
-		if need == "" or need == weather:
-			filtered.append(f)
+		if need != "" and need != weather:
+			continue
+		var need_time := String(f.get("time", ""))
+		if need_time == "night" and not night:
+			continue
+		if need_time == "day" and night:
+			continue
+		filtered.append(f)
 	return filtered

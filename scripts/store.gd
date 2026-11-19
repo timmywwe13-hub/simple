@@ -8,6 +8,9 @@ extends Interactable
 func art_height() -> float:
 	return 140.0
 
+var panel_scroll: ScrollContainer
+var scroll_pos := 0
+
 
 func prompt_label() -> String:
 	return "GENERAL STORE"
@@ -18,10 +21,15 @@ func interact() -> void:
 		return
 	var s := TownUI.screen(town.ui_layer, "GENERAL STORE")
 	var body: VBoxContainer = s["body"]
+	panel_scroll = s["scroll"] as ScrollContainer
+	if panel_scroll != null:
+		panel_scroll.scroll_vertical = scroll_pos
+		panel_scroll.set_deferred("scroll_vertical", scroll_pos)
 	s["coins"].text = "COINS %d" % GameState.coins
 	_gear(body, "Rods", "rods", _on_buy)
 	_gear(body, "Lines", "lines", _on_buy)
 	_gear(body, "Bait", "baits", _on_buy_bait)
+	_gear(body, "Lanterns", "lanterns", _on_buy)
 	_gear(body, "Buckets", "buckets", _on_buy)
 	TownUI.header(body, "TRAVEL PASSES")
 	_region_passes(body)
@@ -43,9 +51,16 @@ func _gear(body: VBoxContainer, title: String, category: String, buy: Callable) 
 		desc_l.position = Vector2(12.0, 24.0)
 		var stat_l := UILib.label(row, _stat_line(category, d), 12, GameTheme.LEAF)
 		stat_l.position = Vector2(300.0, 8.0)
-		# bait is a consumable and is always in stock; owned gear just equips
+		# Bait is a consumable: a bag with charges left can be equipped for
+		# free, so the player can switch between the baits they own.
+		var charges := GameState.bait_count(String(id)) if is_bait else 0
 		var text := "BUY %d" % int(d.get("cost", 0))
-		if not is_bait:
+		if is_bait:
+			if equipped and charges > 0:
+				text = "BUY %d" % int(d.get("cost", 0))
+			elif charges > 0:
+				text = "USE x%d" % charges
+		else:
 			text = "EQUIPPED" if equipped else ("EQUIP" if owned else "BUY %d" % int(d.get("cost", 0)))
 		TownUI.row_button(row, text, buy.bind(category, String(id)))
 
@@ -71,9 +86,16 @@ func _stat_line(category: String, d: Dictionary) -> String:
 	match category:
 		"rods": return "SPEED: %.1fx  WINDOW: %.2f" % [float(d.get("reel_speed", 1.0)), float(d.get("timing_window", 0.2))]
 		"lines": return "KEEP: %.0f%%" % [(1.0 - float(d.get("escape_chance", 0.3))) * 100.0]
-		"baits": return "%d CASTS - BAG %d - %s" % [int(d.get("charges", 1)),
-				GameState.bait_count(String(d.get("id", ""))), ", ".join(d.get("rarity_boost", []))]
+		"baits":
+			var bait_id := String(d.get("id", ""))
+			var line := "%d CASTS - BAG %d - %s" % [int(d.get("charges", 1)),
+					GameState.bait_count(bait_id), ", ".join(d.get("rarity_boost", []))]
+			if String(GameState.gear.get("bait", "")) == bait_id:
+				line += " - EQUIPPED"
+			return line
 		"buckets": return "CAPACITY: %d" % [int(d.get("capacity", 12))]
+		"lanterns": return "NIGHT BITE x%.2f  NIGHT RARE +%.0f%%" % [
+				float(d.get("night_bite", 1.0)), (float(d.get("night_rare", 1.0)) - 1.0) * 100.0]
 		_: return ""
 
 
@@ -86,6 +108,16 @@ func _on_buy(category: String, id: String) -> void:
 
 
 func _on_buy_bait(category: String, id: String) -> void:
+	# A bait already in the bag equips for free; otherwise this buys more.
+	var equipped := String(GameState.gear.get("bait", "")) == id
+	if not equipped and GameState.bait_count(id) > 0:
+		GameState.activate_bait(id)
+		GameState.play_sound("ui")
+		town.toast("%s EQUIPPED - %d CASTS LEFT" % [
+				String(ShopDB.item("baits", id).get("name", "BAIT")).to_upper(),
+				GameState.bait_count(id)])
+		_reopen()
+		return
 	# buy_item adds the charges to the bag and equips the bait
 	if GameState.buy_item(category, id):
 		GameState.play_sound("coin")
@@ -113,6 +145,8 @@ func _fail() -> void:
 
 ## Rebuild the panel so owned / equipped / pass states refresh.
 func _reopen() -> void:
+	if is_instance_valid(panel_scroll):
+		scroll_pos = panel_scroll.scroll_vertical
 	town.close_panel()
 	interact()
 

@@ -71,7 +71,7 @@ static func screen(layer: Node, title: String, card := Vector2(760.0, 470.0)) ->
 	close_hint.offset_right = -24.0
 	close_hint.offset_top = -56.0
 	close_hint.offset_bottom = -24.0
-	return {"root": root, "body": body, "coins": coins, "status": status}
+	return {"root": root, "body": body, "coins": coins, "status": status, "scroll": scroll}
 
 
 ## Small gold section header inside a shop body.

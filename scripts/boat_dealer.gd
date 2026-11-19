@@ -7,6 +7,9 @@ extends Interactable
 func art_height() -> float:
 	return 138.0
 
+var panel_scroll: ScrollContainer
+var scroll_pos := 0
+
 
 func prompt_label() -> String:
 	return "BOAT DEALER"
@@ -17,6 +20,10 @@ func interact() -> void:
 		return
 	var s := TownUI.screen(town.ui_layer, "BOAT DEALER")
 	var body: VBoxContainer = s["body"]
+	panel_scroll = s["scroll"] as ScrollContainer
+	if panel_scroll != null:
+		panel_scroll.scroll_vertical = scroll_pos
+		panel_scroll.set_deferred("scroll_vertical", scroll_pos)
 	s["coins"].text = "COINS %d" % GameState.coins
 	var intro := UILib.label(body, "BUY A BOAT - BETTER BOATS FETCH MORE AT THE FISH MARKET", 14, Color("#a8c0cc"))
 	intro.custom_minimum_size = Vector2(0.0, 24.0)
@@ -51,6 +58,8 @@ func _on_buy(id: String) -> void:
 
 
 func _reopen() -> void:
+	if is_instance_valid(panel_scroll):
+		scroll_pos = panel_scroll.scroll_vertical
 	town.close_panel()
 	interact()
 

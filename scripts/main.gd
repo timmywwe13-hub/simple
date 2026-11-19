@@ -11,6 +11,8 @@ const STATE_REEL := 4
 const STATE_CAUGHT := 5
 const STATE_INDEX := 6
 const STATE_SHOP := 7
+const STATE_STATS := 8
+const STATE_PAUSED := 9
 
 const WATER_RATIO := 0.60
 
@@ -73,6 +75,7 @@ var catch_weight := 0.0
 var catch_new := false
 var catch_rarity := ""
 var catch_coins := 0
+var catch_perfect := false
 ## Bait used for the current cast ("" = fishing bare, caught via
 ## GameState.consume_bait() when the cast starts).
 var cast_bait := ""
@@ -86,6 +89,7 @@ var is_night := false
 ## Weather: "clear", "rain" or "storm". It rolls in on its own timer and
 ## decides which fish bite (see FishDB.fish_pool) and how fast they do.
 var weather := "clear"
+var weather_next := "clear"
 var weather_timer := 45.0
 var lightning_timer := 6.0
 var lightning_flash := 0.0
@@ -128,11 +132,21 @@ var index_panel: Control
 var shop_panel: Control
 var index_list: ItemList
 var index_comp_label: Label
+var index_filter_btn: Button
+var index_uncaught_btn: Button
+var index_filter_region := ""
+var index_only_uncaught := false
 var shop_content: VBoxContainer
 var shop_scroll: ScrollContainer
 ## Scroll offset kept across shop rebuilds so buying near the bottom of
 ## the list no longer snaps the panel back to the top.
 var shop_scroll_pos := 0
+var stats_panel: Control
+var stats_label: Label
+var stats_mute_btn: Button
+var pause_panel: Control
+var pause_mute_btn: Button
+var paused_from := STATE_WORLD
 
 
 func _ready() -> void:
@@ -148,7 +162,10 @@ func _ready() -> void:
 	_spawn_tunnel()
 	_build_index()
 	_build_shop()
+	_build_stats()
+	_build_pause()
 	_build_ambient_fish()
+	weather_next = _roll_weather()
 	if GameState.session_started:
 		_on_start()
 	else:
@@ -184,9 +201,9 @@ func _spawn_tunnel() -> void:
 
 func _build_ambient_fish() -> void:
 	ambient_fish.clear()
-	var pool := FishDB.fish_pool("open" if open_water else region, weather)
+	var pool := FishDB.fish_pool("open" if open_water else region, weather, is_night)
 	if pool.size() == 0:
-		pool = FishDB.fish_pool("pond", weather)
+		pool = FishDB.fish_pool("pond", weather, is_night)
 	var count := 7
 	for i in range(count):
 		var data: Dictionary = pool[i % pool.size()]
@@ -223,6 +240,15 @@ func _key_tick() -> void:
 func _process(dt: float) -> void:
 	_key_tick()
 
+	if state == STATE_PAUSED:
+		mouse_pos = get_viewport().get_mouse_position()
+		if Input.is_action_just_pressed("ui_cancel"):
+			_resume_game()
+		if touch_controls != null:
+			touch_controls.set_context("hidden")
+		queue_redraw()
+		return
+
 	day_time = fposmod(day_time + dt * 0.02, 1.0)
 	is_night = day_time > 0.75 or day_time < 0.25
 	_update_weather(dt)
@@ -256,12 +282,22 @@ func _process(dt: float) -> void:
 			pass
 		STATE_SHOP:
 			pass
+		STATE_STATS:
+			pass
 		STATE_CAUGHT:
 			if _pressed():
 				_on_catch_continue()
 
-	if Input.is_action_just_pressed("ui_cancel") or _touch_tap("menu"):
-		_on_back()
+	if Input.is_action_just_pressed("ui_cancel"):
+		if state == STATE_WORLD or state == STATE_CAST or state == STATE_BITE or state == STATE_REEL:
+			_open_pause()
+		else:
+			_on_back()
+	elif _touch_tap("menu"):
+		if state == STATE_WORLD or state == STATE_CAST or state == STATE_BITE or state == STATE_REEL:
+			_open_pause()
+		else:
+			_on_back()
 
 	if touch_controls != null:
 		touch_controls.set_context(_touch_context())
@@ -302,6 +338,8 @@ func _touch_context() -> String:
 			return "fishing"
 		STATE_REEL:
 			return "reel"
+		STATE_PAUSED:
+			return "hidden"
 		_:
 			return "hidden"
 
@@ -321,25 +359,32 @@ func _night_factor() -> float:
 
 
 func _weather_label() -> String:
-	match weather:
+	return _weather_name(weather)
+
+func _weather_name(w: String) -> String:
+	match w:
 		"rain": return "RAIN"
 		"storm": return "THUNDERSTORM"
 		_: return "CLEAR"
 
+func _roll_weather() -> String:
+	var roll := randf()
+	if roll > 0.78:
+		return "storm"
+	if roll > 0.45:
+		return "rain"
+	return "clear"
 
-## Weather rolls in and out on a timer: clear skies most of the time,
-## with rain and thunderstorms following. Storms bring lightning strikes
-## (flash + thunder) and both rains change which fish are biting.
+
+## Weather rolls in and out on a timer: the next front is picked ahead of
+## time so the HUD can forecast it. Storms bring lightning (flash + thunder)
+## and both rains change which fish are biting.
 func _update_weather(dt: float) -> void:
 	weather_timer -= dt
 	if weather_timer <= 0.0:
+		var next := weather_next
+		weather_next = _roll_weather()
 		weather_timer = randf_range(35.0, 80.0)
-		var roll := randf()
-		var next := "clear"
-		if roll > 0.78:
-			next = "storm"
-		elif roll > 0.45:
-			next = "rain"
 		if next != weather:
 			weather = next
 			GameState.play_sound("ui")
@@ -349,7 +394,7 @@ func _update_weather(dt: float) -> void:
 				"storm":
 					msg("THUNDERSTORM! STORM FISH ARE ON THE MOVE")
 				_:
-					msg("THE SKY CLEARS")
+					msg("THE SKY CLEARS - NEXT: %s" % _weather_name(weather_next))
 			_build_ambient_fish()
 	if weather == "storm":
 		lightning_timer -= dt
@@ -424,6 +469,7 @@ func _update_menu() -> void:
 			"start": _on_start()
 			"index": _on_index()
 			"shop": _on_shop()
+			"stats": _on_stats()
 	elif Input.is_action_just_pressed("ui_accept"):
 		# SPACE / Enter starts the game even without hovering a button
 		GameState.play_sound("ui")
@@ -598,6 +644,8 @@ func _update_cast(dt: float) -> void:
 			bite_delay *= 0.7
 		if cast_bait != "":
 			bite_delay *= 0.7
+		if is_night:
+			bite_delay *= float(_lantern().get("night_bite", 1.0))
 
 
 func _update_bite(dt: float) -> void:
@@ -642,6 +690,7 @@ func _hook_success() -> void:
 func _hook_fail() -> void:
 	hooked = false
 	state = STATE_WORLD
+	GameState.reset_streak()
 	GameState.play_sound("escape")
 	msg("THE FISH GOT AWAY...")
 	shake = 0.6
@@ -651,15 +700,22 @@ func _is_big_fish() -> bool:
 	return GameTheme.get_rarity_rate(catch_rarity) < 0.25
 
 
+func _lantern() -> Dictionary:
+	return ShopDB.item("lanterns", String(GameState.gear.get("lantern", "lantern_none")))
+
+
 func _select_catch() -> void:
-	var pool := FishDB.fish_pool("open" if open_water else region, weather)
+	var pool := FishDB.fish_pool("open" if open_water else region, weather, is_night)
 	if pool.size() == 0:
-		pool = FishDB.fish_pool("pond", weather)
+		pool = FishDB.fish_pool("pond", weather, is_night)
 	var weights := []
 	var total := 0.0
 	var boost: Array = []
+	var bait_data: Dictionary = {}
 	if cast_bait != "":
-		boost = ShopDB.item("baits", cast_bait).get("rarity_boost", [])
+		bait_data = ShopDB.item("baits", cast_bait)
+		boost = bait_data.get("rarity_boost", [])
+	var night_rare := float(_lantern().get("night_rare", 1.0))
 	for f in pool:
 		var w := float(f.get("catch_rate", 1.0))
 		var r := String(f.get("rarity", "Common"))
@@ -669,15 +725,21 @@ func _select_catch() -> void:
 		elif cast_bait != "":
 			if boost.has(r):
 				w *= BAIT_BOOST
+			if String(bait_data.get("time_boost", "")) == ("night" if is_night else "day"):
+				w *= 1.25
+			if (bait_data.get("weather_boost", []) as Array).has(weather):
+				w *= 1.3
 		else:
 			# fishing bare: rare fish almost never show up - buy bait!
 			w *= float(NO_BAIT_PENALTY.get(r, 1.0))
 		if is_night and r == "Legendary":
 			w *= 1.5
+		if is_night and GameTheme.get_rarity_rate(r) < 0.25:
+			w *= night_rare
 		if weather == "storm" and GameTheme.get_rarity_rate(r) < 0.25:
 			w *= 1.3
-		if String(f.get("weather", "")) != "":
-			# weather fish are hungry in their own weather
+		if String(f.get("weather", "")) != "" or String(f.get("time", "")) != "":
+			# weather/time specialists are hungry in their own window
 			w *= 1.5
 		weights.append(w)
 		total += w
@@ -694,7 +756,8 @@ func _select_catch() -> void:
 	var wg: Array = chosen.get("weight_kg", [0.1, 0.5])
 	catch_weight = randf_range(float(wg[0]), float(wg[1]))
 	catch_new = GameState.is_new_species(catch_fish_id)
-	catch_coins = GameState.coin_value(catch_fish_id, catch_weight)
+	catch_perfect = false
+	catch_coins = GameState.sale_value(catch_fish_id, catch_weight)
 
 
 func _update_reel(dt: float) -> void:
@@ -733,7 +796,8 @@ func _finish_timing(prev_pos: float = -1.0) -> void:
 		var swept_lo := minf(prev_pos, reel_pos) - TIMING_GRACE
 		var swept_hi := maxf(prev_pos, reel_pos) + TIMING_GRACE
 		ok = swept_hi >= lo and swept_lo <= hi
-	_complete_catch(ok)
+	var perfect := ok and absf(reel_pos - 0.5) < good * 0.35
+	_complete_catch(ok, perfect)
 
 
 ## Timing window of the equipped rod. Rarer fish fight a little harder:
@@ -783,7 +847,8 @@ func _update_tug(dt: float) -> void:
 		# a short misstep only slows the landing, it does not reset it
 		tug_ok_time = maxf(0.0, tug_ok_time - dt * 0.5)
 	if tug_ok_time >= TUG_HOLD:
-		_complete_catch(true)
+		var perfect := absf(reel_tension - 0.5) < _tug_band() * 0.3
+		_complete_catch(true, perfect)
 
 
 func _reel_held() -> bool:
@@ -801,7 +866,7 @@ func _tug_band() -> float:
 	return (TUG_BAND + (0.3 - float(line.get("escape_chance", 0.3))) * 0.5) * _fight_scale()
 
 
-func _complete_catch(success: bool) -> void:
+func _complete_catch(success: bool, perfect := false) -> void:
 	reel_active = false
 	if success:
 		var f := FishDB.fish_data(catch_fish_id)
@@ -811,8 +876,13 @@ func _complete_catch(success: bool) -> void:
 		# The fish goes into the bucket; selling it in the Tackle Shop or the
 		# Fish Market is what pays - no coins at catch time (that used to pay
 		# every fish twice and wreck the economy).
-		GameState.record_catch(catch_fish_id, catch_weight, "open" if open_water else region, is_night)
+		GameState.record_catch(catch_fish_id, catch_weight, "open" if open_water else region,
+				is_night, weather, perfect)
+		catch_perfect = perfect
+		catch_coins = GameState.sale_value(catch_fish_id, catch_weight, 1.0, perfect)
 		state = STATE_CAUGHT
+		if perfect:
+			flash = maxf(flash, 0.45)
 		if catch_new and GameTheme.get_rarity_rate(catch_rarity) < 0.1:
 			flash = 1.0
 			shake = 0.8
@@ -821,8 +891,10 @@ func _complete_catch(success: bool) -> void:
 			GameState.play_sound("catch")
 	else:
 		state = STATE_WORLD
+		var had_streak := int(GameState.stats.get("current_streak", 0))
+		GameState.reset_streak()
 		GameState.play_sound("escape")
-		msg("THE FISH GOT AWAY...")
+		msg("THE FISH GOT AWAY... STREAK LOST" if had_streak > 0 else "THE FISH GOT AWAY...")
 		shake = 0.6
 
 
@@ -832,6 +904,7 @@ func _complete_catch(success: bool) -> void:
 func _monster_shock(f: Dictionary) -> void:
 	var lost := mini(MONSTER_SHOCK_COST, GameState.coins)
 	GameState.lose_coins(MONSTER_SHOCK_COST)
+	GameState.reset_streak()
 	state = STATE_WORLD
 	hooked = false
 	catch_fish_id = ""
@@ -877,6 +950,10 @@ func hide_all_ui() -> void:
 		index_panel.visible = false
 	if shop_panel:
 		shop_panel.visible = false
+	if stats_panel:
+		stats_panel.visible = false
+	if pause_panel:
+		pause_panel.visible = false
 
 
 func menu_panel_show() -> void:
@@ -903,6 +980,7 @@ func _on_back() -> void:
 			else:
 				show_menu()
 		STATE_SHOP: show_menu()
+		STATE_STATS: show_menu()
 		STATE_CAUGHT: _on_catch_continue()
 		_: show_menu()
 
@@ -922,10 +1000,168 @@ func _on_shop() -> void:
 	_refresh_shop()
 
 
+func _on_stats() -> void:
+	hide_all_ui()
+	stats_panel.visible = true
+	state = STATE_STATS
+	_refresh_stats()
+
+
 func _on_catch_continue() -> void:
 	state = STATE_WORLD
 	catch_fish_id = ""
 	bobber_pos = rod_tip
+
+
+func _build_stats() -> void:
+	var p := Control.new()
+	p.name = "Stats"
+	p.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ui_layer.add_child(p)
+	stats_panel = p
+	var bg := ColorRect.new()
+	bg.color = GameTheme.PANEL
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	p.add_child(bg)
+	var title := UILib.label(p, "ANGLER STATS", 30, GameTheme.CREAM, true, HORIZONTAL_ALIGNMENT_LEFT)
+	title.position = Vector2(28, 18)
+	var sub := UILib.label(p, "EVERYTHING YOU HAVE LANDED SO FAR", 15, Color("#a8c0cc"))
+	sub.position = Vector2(28, 54)
+	stats_label = UILib.label(p, "", 20, GameTheme.CREAM, false, HORIZONTAL_ALIGNMENT_LEFT)
+	stats_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	stats_label.offset_left = 48
+	stats_label.offset_top = 96
+	stats_label.offset_right = -48
+	stats_label.offset_bottom = -100
+	stats_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	var b := UILib.button(p, "BACK", _on_back, 20, GameTheme.PANEL_LIGHT)
+	b.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	b.offset_left = 28
+	b.offset_top = -60
+	b.offset_right = 188
+	b.offset_bottom = -16
+	b.custom_minimum_size = Vector2(160, 44)
+	stats_mute_btn = UILib.button(p, "SOUND: ON", _toggle_mute, 18, GameTheme.PANEL_LIGHT)
+	stats_mute_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	stats_mute_btn.offset_left = -220
+	stats_mute_btn.offset_top = -60
+	stats_mute_btn.offset_right = -28
+	stats_mute_btn.offset_bottom = -16
+	stats_mute_btn.custom_minimum_size = Vector2(192, 44)
+	p.visible = false
+
+
+func _refresh_stats() -> void:
+	if stats_label == null:
+		return
+	var s := GameState.stats
+	var total_species := FishDB.all_ids().size()
+	var caught_species := int(round(GameState.completion_percent() * float(total_species)))
+	var hot := GameState.daily_hot_ids()
+	var hot_names: Array[String] = []
+	for fid in hot:
+		hot_names.append(fish_name(String(fid)))
+	var daily := fish_name(GameState.daily_fish_id())
+	var biggest_name := String(s.get("biggest_name", "-"))
+	if biggest_name == "":
+		biggest_name = "-"
+	var lines := [
+		"TOTAL CATCHES      %d" % GameState.total_caught,
+		"SPECIES            %d / %d  (%.0f%%)" % [caught_species, total_species,
+				GameState.completion_percent() * 100.0],
+		"COINS EARNED       %d" % int(s.get("coins_earned", 0)),
+		"FISH SOLD          %d" % int(s.get("fish_sold", 0)),
+		"PERFECT CATCHES    %d" % int(s.get("perfect_catches", 0)),
+		"STREAK             %d  (BEST %d)" % [int(s.get("current_streak", 0)),
+				int(s.get("best_streak", 0))],
+		"DAILY CATCHES      %d" % int(s.get("daily_catches", 0)),
+		"BIGGEST FISH       %.2f KG  %s" % [float(s.get("biggest_fish", 0.0)), biggest_name],
+		"BUCKET             %d / %d" % [GameState.inventory_count(), GameState.bucket_capacity()],
+		"DAILY CATCH        %s x2" % daily,
+		"HOT DEMAND         %s" % "  ".join(hot_names),
+	]
+	stats_label.text = "\n".join(lines)
+	if stats_mute_btn != null:
+		stats_mute_btn.text = "SOUND: %s" % ("OFF" if GameState.muted else "ON")
+
+
+func _build_pause() -> void:
+	var p := Control.new()
+	p.name = "Pause"
+	p.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ui_layer.add_child(p)
+	pause_panel = p
+	var dim := ColorRect.new()
+	dim.color = Color("#0b1320", 0.62)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	p.add_child(dim)
+	var card := Control.new()
+	card.set_anchors_preset(Control.PRESET_CENTER)
+	card.position = Vector2(-210.0, -150.0)
+	card.size = Vector2(420.0, 300.0)
+	p.add_child(card)
+	var bg := ColorRect.new()
+	bg.color = GameTheme.PANEL
+	bg.size = Vector2(420.0, 300.0)
+	card.add_child(bg)
+	var border := ColorRect.new()
+	border.color = GameTheme.CREAM
+	border.position = Vector2(0.0, 0.0)
+	border.size = Vector2(420.0, 4.0)
+	card.add_child(border)
+	var title := UILib.label(card, "PAUSED", 28, GameTheme.GOLD, true, HORIZONTAL_ALIGNMENT_CENTER)
+	title.position = Vector2(0.0, 18.0)
+	title.size = Vector2(420.0, 34.0)
+	var hint := UILib.label(card, "THE FISH WILL WAIT", 14, Color("#a8c0cc"), false, HORIZONTAL_ALIGNMENT_CENTER)
+	hint.position = Vector2(0.0, 54.0)
+	hint.size = Vector2(420.0, 22.0)
+	var resume := UILib.button(card, "RESUME", _resume_game, 18, GameTheme.LEAF,
+			Color("#7fbd70"), Color("#4f7f45"), UILib.CREAM, Vector2(340.0, 44.0))
+	resume.position = Vector2(40.0, 92.0)
+	pause_mute_btn = UILib.button(card, "SOUND: ON", _toggle_mute, 18, GameTheme.PANEL_LIGHT,
+			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
+	pause_mute_btn.position = Vector2(40.0, 148.0)
+	var menu := UILib.button(card, "MAIN MENU", _pause_to_menu, 18, GameTheme.PANEL_LIGHT,
+			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
+	menu.position = Vector2(40.0, 204.0)
+	p.visible = false
+
+
+func _open_pause() -> void:
+	if pause_panel == null:
+		return
+	if state == STATE_MENU or state == STATE_INDEX or state == STATE_SHOP \
+			or state == STATE_STATS or state == STATE_CAUGHT or state == STATE_PAUSED:
+		return
+	paused_from = state
+	state = STATE_PAUSED
+	pause_panel.visible = true
+	_refresh_pause()
+
+
+func _resume_game() -> void:
+	if pause_panel != null:
+		pause_panel.visible = false
+	state = paused_from
+
+
+func _pause_to_menu() -> void:
+	if pause_panel != null:
+		pause_panel.visible = false
+	show_menu()
+
+
+func _refresh_pause() -> void:
+	if pause_mute_btn != null:
+		pause_mute_btn.text = "SOUND: %s" % ("OFF" if GameState.muted else "ON")
+
+
+func _toggle_mute() -> void:
+	var now_muted := GameState.toggle_mute()
+	_refresh_pause()
+	_refresh_stats()
+	if not now_muted:
+		GameState.play_sound("ui")
 
 
 func _build_index() -> void:
@@ -942,6 +1178,20 @@ func _build_index() -> void:
 	title.position = Vector2(24, 18)
 	index_comp_label = UILib.label(p, "COLLECTION: 0%", 18, GameTheme.GOLD, true, HORIZONTAL_ALIGNMENT_LEFT)
 	index_comp_label.position = Vector2(24, 54)
+	index_filter_btn = UILib.button(p, "REGION: ALL", _cycle_index_region, 14, GameTheme.PANEL_LIGHT,
+			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(190.0, 34.0))
+	index_filter_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	index_filter_btn.offset_left = -430
+	index_filter_btn.offset_top = 20
+	index_filter_btn.offset_right = -240
+	index_filter_btn.offset_bottom = 54
+	index_uncaught_btn = UILib.button(p, "SHOW: ALL", _toggle_index_uncaught, 14, GameTheme.PANEL_LIGHT,
+			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(190.0, 34.0))
+	index_uncaught_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	index_uncaught_btn.offset_left = -220
+	index_uncaught_btn.offset_top = 20
+	index_uncaught_btn.offset_right = -24
+	index_uncaught_btn.offset_bottom = 54
 	var list := ItemList.new()
 	list.name = "List"
 	list.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -962,9 +1212,13 @@ func _build_index() -> void:
 
 
 func _refresh_index() -> void:
+	if index_list == null:
+		return
 	index_list.clear()
 	var ids := FishDB.all_ids()
+	var total := ids.size()
 	var caught := 0
+	var shown := 0
 	for fid in ids:
 		var fid_s := String(fid)
 		var f := FishDB.fish_data(fid_s)
@@ -972,6 +1226,11 @@ func _refresh_index() -> void:
 		var caught_flag := bool(entry.get("caught", false))
 		if caught_flag:
 			caught += 1
+		if index_filter_region != "" and String(f.get("region", "")) != index_filter_region:
+			continue
+		if index_only_uncaught and caught_flag:
+			continue
+		shown += 1
 		var name_val := String(f.get("name", fid_s))
 		if not caught_flag:
 			name_val = "???"
@@ -981,8 +1240,30 @@ func _refresh_index() -> void:
 		index_list.set_item_custom_fg_color(idx, color if caught_flag else Color("#5c6a78"))
 		var sub := "RARITY: %s  PB: %.2f KG" % [rarity, float(entry.get("pb_weight", 0.0))]
 		index_list.set_item_tooltip(idx, sub)
-	var total := ids.size()
-	index_comp_label.text = "COLLECTION: %d / %d  (%.0f%%)" % [caught, total, float(caught) / float(total) * 100.0] if total > 0 else "COLLECTION: 0 / 0"
+	if shown == 0:
+		var empty_idx := index_list.add_item("NO FISH MATCH THIS FILTER")
+		index_list.set_item_disabled(empty_idx, true)
+	var pct := float(caught) / float(total) * 100.0 if total > 0 else 0.0
+	index_comp_label.text = "COLLECTION: %d / %d  (%.0f%%)   SHOWING %d" % [caught, total, pct, shown]
+	if index_filter_btn != null:
+		var region_name := "ALL" if index_filter_region == "" else String(FishDB.REGION_DISPLAY.get(index_filter_region, index_filter_region)).to_upper()
+		index_filter_btn.text = "REGION: %s" % region_name
+	if index_uncaught_btn != null:
+		index_uncaught_btn.text = "SHOW: %s" % ("UNCAUGHT" if index_only_uncaught else "ALL")
+
+
+func _cycle_index_region() -> void:
+	var options := ["", "pond", "river", "lake", "ocean", "open"]
+	var at := options.find(index_filter_region)
+	index_filter_region = String(options[(at + 1) % options.size()])
+	GameState.play_sound("ui")
+	_refresh_index()
+
+
+func _toggle_index_uncaught() -> void:
+	index_only_uncaught = not index_only_uncaught
+	GameState.play_sound("ui")
+	_refresh_index()
 
 
 func _build_shop() -> void:
@@ -1049,6 +1330,7 @@ func _refresh_shop() -> void:
 	_shop_cat("Rods", "rods", _on_buy)
 	_shop_cat("Lines", "lines", _on_buy)
 	_shop_cat("Bait", "baits", _on_buy_bait)
+	_shop_cat("Lanterns", "lanterns", _on_buy)
 	_shop_cat("Bucket", "buckets", _on_buy)
 	_restore_shop_scroll(shop_scroll_pos)
 
@@ -1106,7 +1388,7 @@ func _shop_cat(title: String, category: String, buy_func: Callable) -> void:
 
 
 func _is_equipped(category: String, id: String) -> bool:
-	return String(GameState.gear.get(category, "")) == id
+	return String(GameState.gear.get(GameState.gear_key(category), "")) == id
 
 
 func _stat_line(category: String, d: Dictionary) -> String:
@@ -1121,6 +1403,8 @@ func _stat_line(category: String, d: Dictionary) -> String:
 				line += " - EQUIPPED"
 			return line
 		"buckets": return "CAPACITY: %d" % [int(d.get("capacity", 12))]
+		"lanterns": return "NIGHT BITE x%.2f  NIGHT RARE +%.0f%%" % [
+				float(d.get("night_bite", 1.0)), (float(d.get("night_rare", 1.0)) - 1.0) * 100.0]
 		_: return ""
 
 
@@ -1161,13 +1445,14 @@ func _on_sell_all() -> void:
 
 func _menu_button_rects() -> Array:
 	var bw := 260.0
-	var bh := 42.0
+	var bh := 36.0
 	var bx := (view_size.x - bw) * 0.5
-	var by := view_size.y * 0.56
+	var by := (view_size.y - 390.0) * 0.5 + 150.0
 	return [
 		{"id": "start", "rect": Rect2(bx, by, bw, bh), "label": "START FISHING"},
-		{"id": "index", "rect": Rect2(bx, by + 52.0, bw, bh), "label": "FISH INDEX"},
-		{"id": "shop", "rect": Rect2(bx, by + 104.0, bw, bh), "label": "TACKLE SHOP"},
+		{"id": "index", "rect": Rect2(bx, by + 40.0, bw, bh), "label": "FISH INDEX"},
+		{"id": "shop", "rect": Rect2(bx, by + 80.0, bw, bh), "label": "TACKLE SHOP"},
+		{"id": "stats", "rect": Rect2(bx, by + 120.0, bw, bh), "label": "STATS & SOUND"},
 	]
 
 
@@ -1461,6 +1746,11 @@ func _draw_fisher(t: float) -> void:
 		_draw_boat_at(t, boat_pos, false, false)
 	else:
 		_draw_boat_at(t, Vector2(bank_w + 44.0, _boat_surface_y()), true, false)
+	# equipped lanterns cast a warm pool of light after dark
+	if is_night and String(GameState.gear.get("lantern", "lantern_none")) != "lantern_none":
+		draw_circle(o + Vector2(0.0, -18.0), 48.0, Color(1.0, 0.86, 0.55, 0.10))
+		draw_circle(o + Vector2(0.0, -18.0), 26.0, Color(1.0, 0.92, 0.68, 0.09))
+		_pixel_rect(Rect2(o.x + 8.0, o.y - 30.0, 5.0, 7.0), GameTheme.GOLD)
 	var rod_ready := rod_out or state != STATE_WORLD
 	if not rod_ready:
 		_draw_rod(o, false)  # stowed across the back
@@ -1671,8 +1961,9 @@ func _draw_reel_meter() -> void:
 		var window := _timing_window()
 		var good := window * TIMING_ACCEPT
 		_pixel_rect(Rect2(bar_x + bar_w * (0.5 - good), bar_y, bar_w * good * 2.0, 12.0), GameTheme.LEAF)
+		_pixel_rect(Rect2(bar_x + bar_w * 0.5 - 1.5, bar_y, 3.0, 12.0), GameTheme.GOLD)
 		_pixel_rect(Rect2(bar_x + bar_w * reel_pos - 2.0, bar_y - 5.0, 4.0, 22.0), GameTheme.CREAM)
-		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), "REEL - PRESS IN THE GREEN ZONE",
+		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), "REEL - CENTER = PERFECT BONUS",
 				Color("#cfe0ec"), Color("#050a12", 0.6), 2, 1, 1)
 
 
@@ -1684,8 +1975,16 @@ func _draw_hud() -> void:
 	var left_r: Rect2 = _hud_panel("BUCKET %d/%d" % [GameState.inventory_count(), GameState.bucket_capacity()], false)
 	PixFont.draw_text_shadowed(self, Vector2(12.0, 54.0), rt,
 			Color("#e9d8a8"), Color("#050a12", 0.6), 2, 1, 1)
+	var forecast := "NEXT %s IN %ds" % [_weather_name(weather_next), maxi(0, int(ceil(weather_timer)))]
+	PixFont.draw_text_shadowed(self, Vector2(12.0, 72.0), forecast,
+			Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
+	var daily_id := GameState.daily_fish_id()
+	if daily_id != "":
+		var daily_txt := "DAILY: %s x2" % fish_name(daily_id).to_upper()
+		PixFont.draw_text_shadowed(self, Vector2(12.0, 90.0), daily_txt,
+				GameTheme.GOLD, Color("#050a12", 0.6), 2, 1, 1)
 	PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 62.0),
-			"SPOTS 1-4 - R ROD - B BOAT - I INDEX - ESC MENU", Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
+			"SPOTS 1-4 - R ROD - B BOAT - I INDEX - ESC PAUSE", Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
 	var boat_txt := "BOAT: %s" % String(GameState.current_boat().get("name", "Old Raft")).to_upper()
 	PixFont.draw_text_shadowed(self,
 			Vector2(view_size.x - PixFont.text_width(boat_txt, 2) - 12.0, 52.0),
@@ -1695,6 +1994,12 @@ func _draw_hud() -> void:
 	PixFont.draw_text_shadowed(self,
 			Vector2(view_size.x - PixFont.text_width(bait_txt, 2) - 12.0, 72.0),
 			bait_txt, bait_c, Color("#050a12", 0.6), 2, 1, 1)
+	var streak := int(GameState.stats.get("current_streak", 0))
+	if streak > 0:
+		var streak_txt := "STREAK x%d  +%d%%" % [streak, int((GameState.streak_sale_mult() - 1.0) * 100.0)]
+		PixFont.draw_text_shadowed(self,
+				Vector2(view_size.x - PixFont.text_width(streak_txt, 2) - 12.0, 92.0),
+				streak_txt, GameTheme.LEAF, Color("#050a12", 0.6), 2, 1, 1)
 
 	if msg_text != "":
 		var txt := msg_text
@@ -1731,7 +2036,7 @@ func _bait_hud_text() -> String:
 func _draw_menu() -> void:
 	draw_rect(Rect2(0.0, 0.0, view_size.x, view_size.y), Color("#0b1320", 0.62))
 	var pw := 520.0
-	var ph := 330.0
+	var ph := 390.0
 	var px := (view_size.x - pw) * 0.5
 	var py := (view_size.y - ph) * 0.5
 	_ui_panel(Rect2(px, py, pw, ph), Color("#1d2536", 0.96), GameTheme.CREAM)
@@ -1791,6 +2096,17 @@ func _draw_catch_popup() -> void:
 
 	FishArt.draw_fish(self, Rect2(px + 90.0, py + 104.0, pw - 180.0, 74.0),
 			FishDB.fish_data(catch_fish_id), false, 1.0)
+
+	var tags: Array[String] = []
+	if catch_perfect:
+		tags.append("PERFECT +15%")
+	if GameState.is_daily_catch(catch_fish_id):
+		tags.append("DAILY CATCH x2")
+	if GameState.is_hot_demand(catch_fish_id):
+		tags.append("HOT DEMAND +30%")
+	if not tags.is_empty():
+		PixFont.draw_text_centered(self, px + pw * 0.5, py + 178.0, "   ".join(tags),
+				GameTheme.GOLD, 2, 1)
 
 	var w_txt := "WEIGHT %.2f KG   WORTH %d COINS - SELL IT" % [catch_weight, catch_coins]
 	PixFont.draw_text_centered(self, px + pw * 0.5, py + 200.0, w_txt, GameTheme.WOOD_DARK, 3, 1)

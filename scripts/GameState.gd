@@ -8,13 +8,20 @@ var coins := 50
 var inventory := []
 var index := {}
 var gear := {"rod": "rod_stick", "line": "line_nylon", "bait": "", "bucket": "bucket_small",
-	"boat": "boat_raft"}
+	"boat": "boat_raft", "lantern": "lantern_none"}
 var owned_boats: Array = ["boat_raft"]
 var unlocked_regions := ["pond"]
 ## Bait is a consumable bought at the shop: bait id -> casts left in the bag.
 ## Each cast with bait equipped uses one; without bait rare fish barely bite.
 var bait_counts := {}
 var total_caught := 0
+## Lifetime stats for the stats screen. Merged on load so old saves gain it.
+var stats := {
+	"coins_earned": 0, "fish_sold": 0, "perfect_catches": 0,
+	"current_streak": 0, "best_streak": 0, "daily_catches": 0,
+	"biggest_fish": 0.0, "biggest_name": "", "days_fished": 0,
+}
+var muted := false
 ## True once a session is underway (the player started fishing or travelled).
 ## Used so returning from the Town resumes the fishing scene instead of
 ## showing the start screen again. Not saved - a fresh boot shows the menu.
@@ -74,6 +81,14 @@ const QUEST_DEFS := [
 		"kind": "sell_coins", "target": 500, "need": 500, "reward": 150},
 	{"id": "sell_30", "title": "Big Haul", "desc": "Sell 30 fish in total.",
 		"kind": "sell_count", "target": 30, "need": 30, "reward": 260},
+	{"id": "night_angler", "title": "After Dark", "desc": "Catch 3 fish at night.",
+		"kind": "catch_night", "target": 3, "need": 3, "reward": 140},
+	{"id": "storm_chaser", "title": "Storm Chaser", "desc": "Catch 2 fish in rain or a storm.",
+		"kind": "catch_weather", "target": "bad", "need": 2, "reward": 180},
+	{"id": "perfect_angler", "title": "Dead Center", "desc": "Land 5 perfect catches.",
+		"kind": "perfect_catch", "target": 5, "need": 5, "reward": 200},
+	{"id": "hot_streak", "title": "On Fire", "desc": "Reach a 6-catch streak.",
+		"kind": "catch_streak", "target": 6, "need": 6, "reward": 220},
 ]
 
 var quests: Array = []
@@ -93,6 +108,8 @@ func save_game() -> void:
 		"total_caught": total_caught,
 		"bait_counts": bait_counts,
 		"quests": quests,
+		"stats": stats,
+		"muted": muted,
 	}
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file:
@@ -117,12 +134,19 @@ func _load_game() -> void:
 	inventory = data.get("inventory", [])
 	index = data.get("index", {})
 	gear = data.get("gear", {"rod": "rod_stick", "line": "line_nylon", "bait": "",
-		"bucket": "bucket_small", "boat": "boat_raft"})
+		"bucket": "bucket_small", "boat": "boat_raft", "lantern": "lantern_none"})
 	if not gear.has("boat"):
 		gear["boat"] = "boat_raft"
+	if not gear.has("lantern"):
+		gear["lantern"] = "lantern_none"
 	owned_boats = data.get("owned_boats", ["boat_raft"])
 	unlocked_regions = data.get("unlocked_regions", ["pond"])
 	total_caught = int(data.get("total_caught", 0))
+	muted = bool(data.get("muted", false))
+	var saved_stats: Variant = data.get("stats", {})
+	if typeof(saved_stats) == TYPE_DICTIONARY:
+		for k in saved_stats.keys():
+			stats[k] = saved_stats[k]
 	var saved_baits: Variant = data.get("bait_counts", {})
 	bait_counts = saved_baits if typeof(saved_baits) == TYPE_DICTIONARY else {}
 	# fresh quest metadata + any missing (new) quests, keeping saved progress
@@ -163,7 +187,8 @@ func rarity_of(fish_id: String) -> String:
 	var f: Dictionary = FishDB.fish_data(fish_id)
 	return String(f.get("rarity", "Common"))
 
-func record_catch(fish_id: String, weight: float, region: String, night := false) -> void:
+func record_catch(fish_id: String, weight: float, region: String, night := false,
+		weather := "", perfect := false) -> void:
 	var entry: Dictionary = index.get(fish_id, {"caught": false, "count": 0, "pb_weight": 0.0, "region": region})
 	if not entry.get("caught", false):
 		entry["caught"] = true
@@ -179,9 +204,20 @@ func record_catch(fish_id: String, weight: float, region: String, night := false
 		entry["pb_weight"] = weight
 	entry["region"] = region
 	index[fish_id] = entry
-	inventory.append({"fish_id": fish_id, "weight": weight, "region": region, "caught_at": Time.get_ticks_msec()})
+	inventory.append({"fish_id": fish_id, "weight": weight, "region": region,
+		"caught_at": Time.get_ticks_msec(), "perfect": perfect})
 	total_caught += 1
-	_check_quests("catch", fish_id, {"region": region, "weight": weight, "night": night})
+	stats["current_streak"] = int(stats.get("current_streak", 0)) + 1
+	stats["best_streak"] = maxi(int(stats.get("best_streak", 0)), int(stats["current_streak"]))
+	if perfect:
+		stats["perfect_catches"] = int(stats.get("perfect_catches", 0)) + 1
+	if fish_id == daily_fish_id():
+		stats["daily_catches"] = int(stats.get("daily_catches", 0)) + 1
+	if weight > float(stats.get("biggest_fish", 0.0)):
+		stats["biggest_fish"] = weight
+		stats["biggest_name"] = String(FishDB.fish_data(fish_id).get("name", fish_id))
+	_check_quests("catch", fish_id, {"region": region, "weight": weight, "night": night,
+			"weather": weather, "perfect": perfect, "streak": int(stats["current_streak"])})
 	if AUTO_SAVE:
 		save_game()
 
@@ -206,6 +242,75 @@ func add_coins(amount: int) -> void:
 	if AUTO_SAVE:
 		save_game()
 
+## --- Daily rotation -------------------------------------------------
+## A real-world date key so the daily catch and hot market species change
+## once a day even between sessions.
+func _today_key() -> int:
+	return Time.get_date_string_from_system().replace("-", "").to_int()
+
+func _daily_pick(salt: int, count: int) -> int:
+	if count <= 0:
+		return 0
+	return absi(hash("%d-%d" % [_today_key(), salt])) % count
+
+## One species per real day pays double at the market.
+func daily_fish_id() -> String:
+	var ids := FishDB.all_ids()
+	if ids.is_empty():
+		return ""
+	return String(ids[_daily_pick(3, ids.size())])
+
+## Two species are in demand each day and pay +30%.
+func daily_hot_ids() -> Array:
+	var ids := FishDB.all_ids()
+	if ids.size() < 2:
+		return ids
+	var a := _daily_pick(11, ids.size())
+	var b := (a + 1 + _daily_pick(17, ids.size() - 1)) % ids.size()
+	return [String(ids[a]), String(ids[b])]
+
+func is_daily_catch(fish_id: String) -> bool:
+	return fish_id != "" and fish_id == daily_fish_id()
+
+func is_hot_demand(fish_id: String) -> bool:
+	return daily_hot_ids().has(fish_id)
+
+## Catch streaks pay a little more, up to +20% at ten in a row.
+func streak_sale_mult() -> float:
+	return 1.0 + float(mini(int(stats.get("current_streak", 0)), 10)) * 0.02
+
+## Combined multiplier from daily catch, daily demand, perfect catch and streak.
+func sale_mult(fish_id: String, perfect := false) -> float:
+	var m := streak_sale_mult()
+	if is_daily_catch(fish_id):
+		m *= 2.0
+	if is_hot_demand(fish_id):
+		m *= 1.3
+	if perfect:
+		m *= 1.15
+	return m
+
+## Final value used by the market, the Tackle Shop and the catch popup.
+func sale_value(fish_id: String, weight: float, mult := 1.0, perfect := false) -> int:
+	return int(round(coin_value(fish_id, weight) * mult * sale_mult(fish_id, perfect)))
+
+func reset_streak() -> void:
+	stats["current_streak"] = 0
+	if AUTO_SAVE:
+		save_game()
+
+## Persisted mute switch. Muted sounds are skipped entirely (no queued clip).
+func set_muted(value: bool) -> void:
+	muted = value
+	if muted and audio_player != null:
+		audio_player.stop()
+	if AUTO_SAVE:
+		save_game()
+
+func toggle_mute() -> bool:
+	set_muted(not muted)
+	return muted
+
 ## Coins knocked loose (a monster's shock, a toll...). Never goes negative.
 func lose_coins(amount: int) -> void:
 	coins = maxi(0, coins - amount)
@@ -216,11 +321,16 @@ func lose_coins(amount: int) -> void:
 ## (Fish Market premium) and the owned-boat value bonus.
 func sell_all(mult: float = 1.0) -> int:
 	var total := 0
+	var count := 0
 	for item in inventory:
 		var fid := String(item.get("fish_id", ""))
 		var w := float(item.get("weight", 0.0))
-		total += int(round(coin_value(fid, w) * mult))
+		var perfect := bool(item.get("perfect", false))
+		total += sale_value(fid, w, mult, perfect)
+		count += 1
 	inventory.clear()
+	stats["coins_earned"] = int(stats.get("coins_earned", 0)) + total
+	stats["fish_sold"] = int(stats.get("fish_sold", 0)) + count
 	add_coins(total)
 	_check_quests("sell", "", {"coins": total})
 	if AUTO_SAVE:
@@ -234,8 +344,11 @@ func sell_one(index: int, mult: float = 1.0) -> int:
 	var item: Dictionary = inventory[index]
 	var fid := String(item.get("fish_id", ""))
 	var w := float(item.get("weight", 0.0))
-	var value := int(round(coin_value(fid, w) * mult))
+	var perfect := bool(item.get("perfect", false))
+	var value := sale_value(fid, w, mult, perfect)
 	inventory.remove_at(index)
+	stats["coins_earned"] = int(stats.get("coins_earned", 0)) + value
+	stats["fish_sold"] = int(stats.get("fish_sold", 0)) + 1
 	add_coins(value)
 	_check_quests("sell", "", {"coins": value})
 	if AUTO_SAVE:
@@ -332,11 +445,7 @@ func inventory_count() -> int:
 
 func bucket_capacity() -> int:
 	var id := String(gear.get("bucket", "bucket_small"))
-	match id:
-		"bucket_small": return 12
-		"bucket_med": return 24
-		"bucket_large": return 48
-		_: return 12
+	return maxi(1, int(ShopDB.item("buckets", id).get("capacity", 12)))
 
 func region_percent(region: String) -> float:
 	var fishes := FishDB.fish_by_region(region)
@@ -370,6 +479,7 @@ func gear_key(category: String) -> String:
 		"rods": return "rod"
 		"lines": return "line"
 		"baits": return "bait"
+		"lanterns": return "lantern"
 		"buckets": return "bucket"
 		"boats": return "boat"
 		_: return category
@@ -494,6 +604,18 @@ func _check_quests(kind: String, fish_id: String, data: Dictionary = {}) -> void
 			"own_boat":
 				if kind == "boat":
 					q["progress"] = 1
+			"catch_weather":
+				if kind == "catch":
+					var wet := String(data.get("weather", ""))
+					var target := String(q.get("target", "bad"))
+					if (target == "bad" and (wet == "rain" or wet == "storm")) or target == wet:
+						q["progress"] = int(q.get("progress", 0)) + 1
+			"perfect_catch":
+				if kind == "catch" and bool(data.get("perfect", false)):
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"catch_streak":
+				if kind == "catch":
+					q["progress"] = maxi(int(q.get("progress", 0)), int(data.get("streak", 0)))
 		if int(q.get("progress", 0)) >= quest_need(q):
 			q["done"] = true
 
@@ -505,7 +627,7 @@ func _setup_audio() -> void:
 	add_child(audio_player)
 
 func play_sound(sfx_name: String) -> void:
-	if audio_player == null:
+	if audio_player == null or muted:
 		return
 	var wav: AudioStreamWAV = sfx_cache.get(sfx_name)
 	if wav == null:

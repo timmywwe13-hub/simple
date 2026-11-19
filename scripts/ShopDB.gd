@@ -12,6 +12,8 @@ static var RODS := {
 		"reel_speed": 1.9, "timing_window": 0.28, "desc": "Quick and responsive.", "owned": false},
 	"rod_fiber": {"id": "rod_fiber", "name": "Reed Rod", "cost": 1200,
 		"reel_speed": 2.5, "timing_window": 0.36, "desc": "Nearly effortless reeling.", "owned": false},
+	"rod_carbon": {"id": "rod_carbon", "name": "Carbon Rod", "cost": 2600,
+		"reel_speed": 3.2, "timing_window": 0.42, "desc": "Tournament blank. Huge green zone.", "owned": false},
 }
 
 static var LINES := {
@@ -21,6 +23,8 @@ static var LINES := {
 		"escape_chance": 0.20, "desc": "Holds better.", "owned": false},
 	"line_braided": {"id": "line_braided", "name": "Braided Line", "cost": 600,
 		"escape_chance": 0.12, "desc": "Rare fish stay on.", "owned": false},
+	"line_fluoro": {"id": "line_fluoro", "name": "Fluorocarbon Line", "cost": 1400,
+		"escape_chance": 0.06, "desc": "Almost nothing shakes this line.", "owned": false},
 }
 
 ## Bait is a consumable bought at the shop: every purchase adds `charges`
@@ -36,6 +40,14 @@ static var BAITS := {
 	"bait_glow": {"id": "bait_glow", "name": "Glow Bait", "cost": 220,
 		"charges": 3, "duration_sec": 120, "rarity_boost": ["Rare", "Epic", "Legendary"],
 		"desc": "3 casts of the deep: epic and legendary fish."},
+	"bait_moon": {"id": "bait_moon", "name": "Moon Bait", "cost": 150,
+		"charges": 4, "duration_sec": 120, "rarity_boost": ["Uncommon", "Rare", "Epic"],
+		"time_boost": "night",
+		"desc": "4 night casts that draw the moonfin hunters."},
+	"bait_storm": {"id": "bait_storm", "name": "Storm Bait", "cost": 240,
+		"charges": 3, "duration_sec": 120, "rarity_boost": ["Rare", "Epic", "Legendary"],
+		"weather_boost": ["rain", "storm"],
+		"desc": "3 foul-weather casts. Bad weather fish love it."},
 }
 
 static var BUCKETS := {
@@ -45,6 +57,22 @@ static var BUCKETS := {
 		"capacity": 24, "owned": false, "desc": "Holds 24 fish."},
 	"bucket_large": {"id": "bucket_large", "name": "Large Creel", "cost": 700,
 		"capacity": 48, "owned": false, "desc": "Holds 48 fish."},
+	"bucket_cooler": {"id": "bucket_cooler", "name": "Deck Cooler", "cost": 1500,
+		"capacity": 72, "owned": false, "desc": "Holds 72 fish and keeps them fresh."},
+}
+
+## Lanterns make night fishing easier: lower night_bite means faster bites,
+## higher night_rare means rarer night fish are more likely.
+static var LANTERNS := {
+	"lantern_none": {"id": "lantern_none", "name": "No Lantern", "cost": 0,
+		"night_bite": 1.0, "night_rare": 1.0, "owned": true,
+		"desc": "Fishing blind after dark."},
+	"lantern_oil": {"id": "lantern_oil", "name": "Oil Lamp", "cost": 260,
+		"night_bite": 0.90, "night_rare": 1.25, "owned": false,
+		"desc": "A warm flame. Night bites come 10% faster."},
+	"lantern_storm": {"id": "lantern_storm", "name": "Storm Lantern", "cost": 750,
+		"night_bite": 0.80, "night_rare": 1.55, "owned": false,
+		"desc": "Sealed against the wind. Night rare fish love it."},
 }
 
 static var BOATS := {
@@ -78,6 +106,7 @@ static func _db(category: String) -> Dictionary:
 		"rods": return RODS
 		"lines": return LINES
 		"baits": return BAITS
+		"lanterns": return LANTERNS
 		"buckets": return BUCKETS
 		"boats": return BOATS
 		_: return {}
