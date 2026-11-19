@@ -1,0 +1,149 @@
+class_name GeneralStore
+extends Interactable
+
+## General Store: sells gear (rods / lines / bait / buckets) and travel
+## passes for the locked fishing regions. Same purchase paths as the
+## Tackle Shop in the fishing scene.
+
+func art_height() -> float:
+	return 140.0
+
+
+func prompt_label() -> String:
+	return "GENERAL STORE"
+
+
+func interact() -> void:
+	if town == null:
+		return
+	var s := TownUI.screen(town.ui_layer, "GENERAL STORE")
+	var body: VBoxContainer = s["body"]
+	s["coins"].text = "COINS %d" % GameState.coins
+	_gear(body, "Rods", "rods", _on_buy)
+	_gear(body, "Lines", "lines", _on_buy)
+	_gear(body, "Bait", "baits", _on_buy_bait)
+	_gear(body, "Buckets", "buckets", _on_buy)
+	TownUI.header(body, "TRAVEL PASSES")
+	_region_passes(body)
+	town.open_panel(s["root"])
+
+
+func _gear(body: VBoxContainer, title: String, category: String, buy: Callable) -> void:
+	TownUI.header(body, title.to_upper())
+	var db: Dictionary = ShopDB.category(category)
+	for id in db.keys():
+		var d: Dictionary = db[id]
+		var owned := bool(d.get("owned", false))
+		var equipped := String(GameState.gear.get(category, "")) == String(id)
+		var row := TownUI.row(body)
+		var name_l := UILib.label(row, String(d.get("name", id)), 16, UILib.CREAM, true)
+		name_l.position = Vector2(12.0, 4.0)
+		var desc_l := UILib.label(row, String(d.get("desc", "")), 12, Color("#a8c0cc"))
+		desc_l.position = Vector2(12.0, 24.0)
+		var stat_l := UILib.label(row, _stat_line(category, d), 12, GameTheme.LEAF)
+		stat_l.position = Vector2(300.0, 8.0)
+		var text := "OWNED" if owned else ("EQUIPPED" if equipped else "BUY %d" % int(d.get("cost", 0)))
+		TownUI.row_button(row, text, buy.bind(category, String(id)))
+
+
+func _region_passes(body: VBoxContainer) -> void:
+	for r in ["river", "lake", "ocean"]:
+		if GameState.unlocked_regions.has(r):
+			continue
+		var display := String(FishDB.REGION_DISPLAY.get(r, r))
+		var cost := int(FishDB.REGION_UNLOCK_COST.get(r, 0))
+		var row := TownUI.row(body)
+		var name_l := UILib.label(row, "%s PASS" % display.to_upper(), 16, UILib.CREAM, true)
+		name_l.position = Vector2(12.0, 4.0)
+		var note := "UNLOCK THE %s FISHING SPOT" % display.to_upper()
+		if r == "ocean":
+			note = "REQUIRES A REAL BOAT - SEE THE BOAT DEALER"
+		var desc_l := UILib.label(row, note, 12, Color("#a8c0cc"))
+		desc_l.position = Vector2(12.0, 24.0)
+		TownUI.row_button(row, "BUY %d" % cost, _on_unlock.bind(r))
+
+
+func _stat_line(category: String, d: Dictionary) -> String:
+	match category:
+		"rods": return "SPEED: %.1fx  WINDOW: %.2f" % [float(d.get("reel_speed", 1.0)), float(d.get("timing_window", 0.2))]
+		"lines": return "KEEP: %.0f%%" % [(1.0 - float(d.get("escape_chance", 0.3))) * 100.0]
+		"baits": return "BOOSTS: %s" % [", ".join(d.get("rarity_boost", []))]
+		"buckets": return "CAPACITY: %d" % [int(d.get("capacity", 12))]
+		_: return ""
+
+
+func _on_buy(category: String, id: String) -> void:
+	if GameState.buy_item(category, id):
+		GameState.play_sound("coin")
+		_reopen()
+	else:
+		_fail()
+
+
+func _on_buy_bait(category: String, id: String) -> void:
+	if GameState.buy_item(category, id):
+		GameState.activate_bait(id)
+		GameState.play_sound("coin")
+		_reopen()
+	else:
+		_fail()
+
+
+func _on_unlock(region: String) -> void:
+	if GameState.unlock_region(region):
+		GameState.play_sound("coin")
+		_reopen()
+	else:
+		GameState.play_sound("buzz")
+		if region == "ocean" and not GameState.has_seaworthy_boat():
+			town.toast("THE DEEP SEA NEEDS A REAL BOAT")
+		else:
+			town.toast("NOT ENOUGH COINS!")
+
+
+func _fail() -> void:
+	GameState.play_sound("buzz")
+	town.toast("NOT ENOUGH COINS!")
+
+
+## Rebuild the panel so owned / equipped / pass states refresh.
+func _reopen() -> void:
+	town.close_panel()
+	interact()
+
+
+func _draw() -> void:
+	var wall := GameTheme.WOOD
+	var wall_dark := GameTheme.WOOD_DARK
+	var roof := Color("#a8493c")
+	var roof_dark := Color("#7c332c")
+	# body + corner posts
+	_pixel_rect(Rect2(-62.0, -100.0, 124.0, 100.0), wall)
+	_pixel_rect(Rect2(-62.0, -100.0, 6.0, 100.0), wall_dark)
+	_pixel_rect(Rect2(56.0, -100.0, 6.0, 100.0), wall_dark)
+	_pixel_rect(Rect2(-62.0, -14.0, 124.0, 14.0), wall_dark)
+	_pixel_rect(Rect2(-62.0, -100.0, 124.0, 4.0), wall_dark)
+	# roof
+	_pixel_rect(Rect2(-70.0, -116.0, 140.0, 8.0), roof_dark)
+	_pixel_rect(Rect2(-66.0, -108.0, 132.0, 8.0), roof)
+	# striped awning
+	for i in range(6):
+		var c := UILib.CREAM if i % 2 == 0 else Color("#c85c4e")
+		_pixel_rect(Rect2(-64.0 + float(i) * 21.2, -96.0, 21.2, 10.0), c)
+	_pixel_rect(Rect2(-64.0, -88.0, 128.0, 3.0), wall_dark)
+	# door + window
+	_pixel_rect(Rect2(-40.0, -70.0, 30.0, 56.0), Color("#3a2a24"))
+	_pixel_rect(Rect2(-37.0, -67.0, 24.0, 50.0), Color("#54382c"))
+	_pixel_rect(Rect2(18.0, -70.0, 40.0, 30.0), Color("#2c3d4d"))
+	_pixel_rect(Rect2(21.0, -67.0, 34.0, 24.0), Color("#9fc0cc"))
+	_pixel_rect(Rect2(37.0, -70.0, 3.0, 30.0), Color("#2c3d4d"))
+	_pixel_rect(Rect2(18.0, -57.0, 40.0, 3.0), Color("#2c3d4d"))
+	# sign
+	_pixel_rect(Rect2(-34.0, -136.0, 68.0, 20.0), UILib.PANEL_LIGHT)
+	PixFont.draw_text_centered(self, 0.0, -132.0, "STORE", GameTheme.GOLD, 2, 1)
+	# crates
+	_pixel_rect(Rect2(-88.0, -22.0, 22.0, 22.0), wall)
+	_pixel_rect(Rect2(-88.0, -22.0, 22.0, 4.0), wall_dark)
+	_pixel_rect(Rect2(-86.0, -36.0, 18.0, 14.0), wall)
+	_pixel_rect(Rect2(-86.0, -36.0, 18.0, 3.0), wall_dark)
+	draw_prompt()

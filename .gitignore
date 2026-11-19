@@ -1,0 +1,17 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# stale web-export leftovers at the project root (an old export pointed at
+# res:// - the real web build lives in build/web and IS committed)
+/simple.js
+/simple.wasm
+/simple.pck
+/simple.audio.worklet.js
+/simple.audio.position.worklet.js
+/simple.icon.png
+/simple.icon.png.import
+/simple.png
+/simple.png.import
+/simple.apple-touch-icon.png
+/simple.apple-touch-icon.png.import

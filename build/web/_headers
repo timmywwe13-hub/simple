@@ -1,0 +1,14 @@
+/*
+  X-Content-Type-Options: nosniff
+
+/*.wasm
+  Cache-Control: no-cache
+
+/*.pck
+  Cache-Control: no-cache
+
+/*.js
+  Cache-Control: no-cache
+
+/index.html
+  Cache-Control: no-cache

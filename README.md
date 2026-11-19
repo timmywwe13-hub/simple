@@ -1,0 +1,124 @@
+# Cottage Creek Fishing
+
+A simple, polished 2D fishing game with a collection-and-progression loop, built in **Godot 4.7** (GDScript, Canvas 2D rendering, no external assets).
+
+## How to run
+
+1. Open **Godot 4.x** and click **Import** → select this folder (`simple2/`) → choose `project.godot`.
+2. Press **Play** (or `F5`). The game boots to the main menu.
+3. Alternatively, launch headless: `godot --path . --main-pack res://main.tscn --quit-after` (testing only).
+
+## Controls
+
+| Action | Key / Mouse |
+|---|---|
+| Start game (menu) | `SPACE`, `Enter`, or left-click "START FISHING" |
+| Aim cast | Move mouse |
+| Cast / hook / reel | `SPACE` or left-click |
+| Walk along the bank | `A` / `D` (or arrows) |
+| Take out / put away fishing rod | `R` |
+| Board / land boat | `B` |
+| Sail the boat (while aboard) | `A` / `D` (or left/right arrows) |
+| Reach Open Water | sail past the east edge of the water in the boat |
+| Return from Open Water | sail west past the edge |
+| Switch fishing spot | `1`–`4` |
+| Open the Fish Index | `I` (from the menu or right on the water) |
+| Back / menu | `Escape` |
+| Quit | close window |
+
+**On touchscreens** (phones/tablets) an on-screen pad and buttons appear:
+move with the left thumb, tap the water to aim and cast, and use the big
+button to cast / hook / reel / hold tension (its label changes with the
+situation). The small buttons cover rod, boat, spots `1`–`4`, index and
+menu, and multi-touch works.
+
+## Gameplay loop
+
+1. **Cast** — aim with the mouse, press `SPACE`/click to cast the bobber.
+2. **Wait for a bite** — a `!` indicator flashes over the bobber with a bite sound. Click quickly to hook.
+3. **Reel** — small fish: timing bar (press in the green zone). Big fish: physics tug-of-war (hold `SPACE` to reel in and keep the tension marker in the green band).
+4. **Catch popup** — fish name, weight, rarity, coin value, plus a `NEW SPECIES!` badge on first catch.
+5. **Sell / Index** — open the Fish Index (`I`, also mid-fishing: collection log with silhouettes until caught) or the Tackle Shop (sell all fish for coins).
+6. **Upgrade** — buy better rods (faster reeling, wider timing window), lines (fewer escapes), bait (attracts rarer fish), and bigger buckets (more inventory).
+7. **Progress** — unlock the River, Lake, and Deep Sea regions by coins; each has its own fish table. Day/night cycle changes which fish appear.
+
+## Save system
+
+Progress (coins, inventory, fish index, gear, unlocked regions, quests) auto-saves to `user://save.json` and resumes on restart.
+
+## Project structure
+
+```
+res://main.tscn          # Main scene (Node2D)
+res://scripts/main.gd    # Game loop: cast/bite/reel, rendering, UI screens
+res://scripts/GameState.gd # Save/load, inventory, index, gear, quests, audio SFX
+res://scripts/FishDB.gd  # All fish data + regional tables
+res://scripts/ShopDB.gd  # Rods / lines / baits / buckets data
+res://scripts/GameTheme.gd # Cottagecore color palette + rarity tiers
+res://scripts/ui_lib.gd  # Tiny code-only UI toolkit
+res://scripts/touch_controls.gd # On-screen touch controls for phones/tablets
+res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
+```
+
+## Bug fixes (v1.3)
+
+- **Mobile support**: on phones/tablets the game shows on-screen touch controls - a movement pad, a big CAST/HOOK/REEL/HOLD button, and small buttons for rod, boat, fishing spots `1`–`4`, the Fish Index and the menu. Tap the water to aim and cast; multi-touch works (walk with the left thumb, fish with the right). The buttons feed the normal input actions so the rest of the game is unchanged
+- **Fish Index in-game**: press `I` (or the INDEX button) while fishing to open the collection log; BACK returns to the water instead of the start menu
+- **Hold minigame fixed**: the big-fish tug-of-war used to fail within half a second whether you held the button or not (tension moved ~1.0/s against a ±0.15 band with an instant fail at the ends). Tension now drifts slowly, the green band is wider (and better lines widen it - the line upgrade finally matters in the fight), the landing progress survives short missteps, and the fish only escapes after the line has been fully slack or fully strained for a moment straight
+- **Boats float on the water**: the hull now rides the surface with water lapping at the waterline instead of drifting through the middle of the water (sailing is `A`/`D` along the surface)
+- **Fish economy balanced**: catches used to pay twice (once at catch time, again at sale) and heavy fish paid absurd amounts (a marlin was worth ~30,000 coins). A fish now pays its listed value once - scaled 85–130% by where its weight falls inside the species' range - and species values were re-tiered; the Fish Market premium (+15%) and boat bonuses still apply when selling
+
+## Bug fixes (v1.2)
+
+- **All runtime errors fixed** (a full playthrough now runs clean):
+  - Tackle Shop rebuilt its rows with double-parented widgets (a flood of `already has a parent` errors on every shop open/refresh)
+  - Tunnel travel freed the scene inside `_process`/physics callbacks (`previously freed` errors and `Removing a CollisionObject node during a physics callback`); the scene swap is now deferred to idle time
+- **Town round-trip fixed**: returning from the Town now resumes fishing directly instead of showing the start screen again
+- **Boats are usable**: press `B` on the shore to board your equipped boat and sail with `WASD`; better boats move faster (their ShopDB `speed` stat) and raise Fish Market payouts; press `B` near the shore to land
+- **Open Water section**: sail past the east edge of any fishing spot to load a new body of open sea with its own fish for the index (Mackerel, Flying Fish, Ocean Sunfish, Mahi Mahi, Bluefin Tuna, Swordfish, and a Legendary Coelacanth - 17 species total); sail west to return
+- **Boats redrawn**: real hulls with rising bow/stern, plank lines, seats and a water shadow - log raft, wood rowboat, cream skiff, red trawler with wheelhouse - and the fisher stands *inside* behind the gunwale
+- **Rods look different**: Twig Rod is a crooked dark stick, Willow Rod a smooth tan blank, Bamboo Rod golden with segment bands, Reed Rod a slim pale composite - each with its own reel color (held or stowed on your back)
+- **Fishing rod toggle**: press `R` to take the rod out or put it away (it rides on your back while stowed)
+- **Ambient fish**: smaller and deeper, and shadowed at night (no more giant striped blobs at the surface)
+- **Menu**: `SPACE`/`Enter` starts the game even without hovering a button
+- **Deep Sea gate**: pressing `4` without a seaworthy boat now explains that the Boat Dealer sells one
+- **Exit leak fixed**: the audio SFX are baked into cached `AudioStreamWAV` clips instead of an `AudioStreamGenerator`, so no `ObjectDB` instance leaks at exit
+- **HUD overlap fixed**: the coins panel no longer hides behind the bucket panel (moved to top-right), and the equipped boat is shown
+- **Screen fills the window**: the game opens maximized with `stretch/aspect="expand"`, so there are no more black borders - on wider screens you simply see more of the water
+
+## Bug fixes (v1.1)
+
+- **Click-to-start fixed**: Menu now responds to `SPACE`, `Enter`, and mouse click (not just button signals)
+- **Audio crash fixed**: `AudioStreamPlayer.get_stream_playback()` now called after `play()` initializes playback
+- **Unused parameter warnings**: `update_bait(_dt)`, `_update_world(_dt)` prefixes added
+- **Variable shadowing fixed**: `size` → `view_size`, `name` → `fish_name_val`, `seed` → `fish_seed`
+- **Removed unused variable**: `y` in `_refresh_shop()`
+- **ItemList color fix**: `set_item_custom_color` → `set_item_custom_fg_color` (correct Godot 4 API)
+
+## Features implemented
+
+- **Fish index** — scrollable grid; silhouettes (`???`) until caught; shows name, rarity, size range, personal-best weight, and collection % per region.
+- **Rarity tiers** — Common/Uncommon/Rare/Epic/Legendary with distinct colors, catch rates, and weights. Rarier fish appear in deeper regions / at night.
+- **4 fishing spots** — Pond, River, Lake, Deep Sea, unlocked by coins.
+- **Boats** — buy at the Boat Dealer in Town; board with `B` and sail the water (raft, rowboat, skiff, trawler; faster speed + better payouts).
+- **Rod toggle** — `R` equips / stows the fishing rod.
+- **Shop/upgrades** — rods, lines, bait, bigger buckets.
+- **Save/load** — `user://save.json`.
+- **Progression goals** — region completion %, quests (First Catch, Rare Find, Collector).
+- **Polish** — idle bobber bob, water ripple particles, day/night cycle, bite `!` indicator, screen-shake/flash on rare catches, procedural WebAudio beep SFX, cottagecore color palette, all art drawn procedurally (no external assets).
+
+## Web export (Netlify)
+
+Build the web version (Godot 4.7.x with Web export templates installed):
+
+```
+godot --headless --path . --export-release Web build/web/index.html
+```
+
+This produces the static site in `build/web/` (already built in this repo). To deploy on Netlify:
+
+- **Fastest:** drag-and-drop the `build/web` folder onto <https://app.netlify.com/drop>.
+- **CLI:** `npx netlify-cli deploy --dir=build/web --prod` (picks up `netlify.toml`).
+- **Git:** connect the repo in Netlify; `netlify.toml` publishes `build/web` (commit the folder after rebuilding).
+
+Saves work in the browser via `user://` (persisted in IndexedDB), so no backend is needed.

@@ -1,0 +1,35 @@
+# Netlify config for the Godot web export.
+#
+# Deploy the prebuilt folder `build/web/` — either:
+#   * drag-and-drop it onto https://app.netlify.com/drop, or
+#   * `npx netlify-cli deploy --dir=build/web --prod`
+# Rebuild locally with:
+#   godot --headless --path . --export-release Web build/web/index.html
+
+[build]
+  publish = "build/web"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+
+[[headers]]
+  for = "/*.wasm"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/*.pck"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
