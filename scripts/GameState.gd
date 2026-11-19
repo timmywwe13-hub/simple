@@ -206,6 +206,12 @@ func add_coins(amount: int) -> void:
 	if AUTO_SAVE:
 		save_game()
 
+## Coins knocked loose (a monster's shock, a toll...). Never goes negative.
+func lose_coins(amount: int) -> void:
+	coins = maxi(0, coins - amount)
+	if AUTO_SAVE:
+		save_game()
+
 ## Sell every fish in the bucket. `mult` applies shop-side price bonuses
 ## (Fish Market premium) and the owned-boat value bonus.
 func sell_all(mult: float = 1.0) -> int:
@@ -405,6 +411,8 @@ func activate_bait(bait_id: String) -> void:
 	if bait_count(bait_id) <= 0:
 		return
 	gear["bait"] = bait_id
+	if AUTO_SAVE:
+		save_game()
 
 ## Use one charge of the equipped bait for the cast that is starting.
 ## Returns the bait id used ("" when fishing bare - rare fish hate that).
@@ -519,6 +527,8 @@ func _bake_sfx(sfx_name: String) -> AudioStreamWAV:
 		"coin": [1046.0, 0.10, 0.20, 1],
 		"ui": [700.0, 0.05, 0.10, 1],
 		"buzz": [150.0, 0.30, 0.18, 2],
+		"shock": [190.0, 0.40, 0.32, 2],
+		"thunder": [58.0, 1.10, 0.34, 2],
 	}
 	var t: Array = sfx.get(sfx_name, [])
 	if t.size() == 0:

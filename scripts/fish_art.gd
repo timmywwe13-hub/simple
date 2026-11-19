@@ -38,6 +38,9 @@ static func _half_width(shape: String, v: float) -> float:
 			return pow(maxf(0.0, 1.0 - absf(2.0 * v - 1.0)), 0.7) * 0.52
 		"ribbon":
 			return (1.0 - pow(absf(2.0 * v - 1.0), 2.0)) * 0.16
+		"serpent":
+			# slim and whippy - a monster should never look fat
+			return pow(sin(PI * clampf(v, 0.03, 0.97)), 0.5) * 0.13
 		_:
 			return sqrt(maxf(0.0, 1.0 - pow(2.0 * v - 1.0, 2.0))) * 0.48
 
@@ -73,7 +76,7 @@ static func draw_fish(ci: CanvasItem, rect: Rect2, fish: Dictionary,
 	var p3 := Vector2(back_x, y0 + 8.8 * unit)
 	var p4 := Vector2(back_x + tail_reach * 0.45 * facing, y0 + 5.5 * unit)
 	var tc := fin_c if not silhouette else outline
-	if shape == "eel" or shape == "long":
+	if shape == "eel" or shape == "long" or shape == "serpent":
 		# pointed tail
 		ci.draw_colored_polygon(PackedVector2Array([p1, p2, p3]), tc)
 	else:
@@ -169,6 +172,16 @@ static func draw_fish(ci: CanvasItem, rect: Rect2, fish: Dictionary,
 				if (fish_seed + r * 5) % 3 == 0:
 					ci.draw_rect(Rect2(cx - hw * 0.6, ry, unit * 0.45, unit), Color(1, 1, 1, 0.32))
 					ci.draw_rect(Rect2(cx + hw * 0.35, ry, unit * 0.45, unit), Color(1, 1, 1, 0.32))
+			"lightning":
+				# jagged electric bolt running down the flank, plus sparks
+				var zig := (float((r + fish_seed) % 3) - 1.0) * hw * 0.45
+				ci.draw_rect(Rect2(cx + zig - unit * 0.35, ry, unit * 0.7, unit),
+						Color("#ffe45c"))
+				if (fish_seed + r * 3) % 5 == 0:
+					ci.draw_rect(Rect2(cx - hw * 0.85, ry + unit * 0.2, unit * 0.35, unit * 0.35),
+							Color(1.0, 1.0, 1.0, 0.65))
+					ci.draw_rect(Rect2(cx + hw * 0.55, ry + unit * 0.5, unit * 0.3, unit * 0.3),
+							Color(1.0, 1.0, 1.0, 0.5))
 
 	# --- species features (whiskers, bills, sails, spikes, fangs, lanterns...) ---
 	_draw_features(ci, fish, x0, body_w, y0, unit, facing, fin_c, silhouette)
@@ -182,8 +195,8 @@ static func draw_fish(ci: CanvasItem, rect: Rect2, fish: Dictionary,
 	var pr := er * 0.45
 	ci.draw_rect(Rect2(ex - pr, ey - pr, pr * 2.0, pr * 2.0), eye_c if not silhouette else outline)
 
-	# --- glow halo for lantern/deep-sea fish ---
-	if (shape == "glow" or pattern == "glow") and not silhouette:
+	# --- glow halo for lantern/deep-sea fish (and the electric monster) ---
+	if (shape == "glow" or pattern == "glow" or features.has("glow")) and not silhouette:
 		var gc := body_c.lerp(Color("#ffffff"), 0.55)
 		for i in range(3):
 			var rr: float = body_w * (0.30 + 0.22 * float(i))

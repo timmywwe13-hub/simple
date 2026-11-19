@@ -28,6 +28,22 @@ const TUG_BAND := 0.2
 const TUG_HOLD := 1.2
 const TUG_PEG := 0.8
 
+## Forgiveness around the timing window. The press is judged against the
+## marker exactly as it was last drawn, and this hair of grace covers
+## input latency - clicking the green no longer randomly reads as a miss.
+const TIMING_GRACE := 0.03
+
+## Big-fish tug: a quick tap works like a short pump, so clicking in the
+## green lands fish just like holding the button does.
+const TUG_TAP_PUMP := 0.07
+const TUG_TAP_PROGRESS := 0.45
+
+## The Volt Serpent monster bites back when you pull it in: 5% of the
+## time it shocks you (you lose a few coins and it escapes), otherwise
+## it's yours to keep and sell.
+const MONSTER_SHOCK_CHANCE := 0.05
+const MONSTER_SHOCK_COST := 20
+
 ## Rare fish are harder to come by without bait bought at the shop: their
 ## bite odds are cut hard when fishing bare, and the matching bait instead
 ## boosts them (BAIT_BOOST). Bait is a consumable - one charge per cast.
@@ -67,6 +83,16 @@ var msg_text := ""
 var day_time := 0.63
 var is_night := false
 
+## Weather: "clear", "rain" or "storm". It rolls in on its own timer and
+## decides which fish bite (see FishDB.fish_pool) and how fast they do.
+var weather := "clear"
+var weather_timer := 45.0
+var lightning_timer := 6.0
+var lightning_flash := 0.0
+var lightning_x := 480.0
+## Red screen tint after a monster shock (decays like `flash`).
+var hurt_flash := 0.0
+
 var view_size := Vector2(960.0, 540.0)
 var water_line := 324.0
 var bank_w := 403.0
@@ -103,6 +129,10 @@ var shop_panel: Control
 var index_list: ItemList
 var index_comp_label: Label
 var shop_content: VBoxContainer
+var shop_scroll: ScrollContainer
+## Scroll offset kept across shop rebuilds so buying near the bottom of
+## the list no longer snaps the panel back to the top.
+var shop_scroll_pos := 0
 
 
 func _ready() -> void:
@@ -154,9 +184,9 @@ func _spawn_tunnel() -> void:
 
 func _build_ambient_fish() -> void:
 	ambient_fish.clear()
-	var pool := FishDB.fish_by_region("open") if open_water else FishDB.fish_by_region(region)
+	var pool := FishDB.fish_pool("open" if open_water else region, weather)
 	if pool.size() == 0:
-		pool = FishDB.fish_by_region("pond")
+		pool = FishDB.fish_pool("pond", weather)
 	var count := 7
 	for i in range(count):
 		var data: Dictionary = pool[i % pool.size()]
@@ -195,11 +225,14 @@ func _process(dt: float) -> void:
 
 	day_time = fposmod(day_time + dt * 0.02, 1.0)
 	is_night = day_time > 0.75 or day_time < 0.25
+	_update_weather(dt)
 
 	if shake > 0.0:
 		shake = maxf(0.0, shake - dt * 3.5)
 	if flash > 0.0:
 		flash = maxf(0.0, flash - dt * 2.5)
+	if hurt_flash > 0.0:
+		hurt_flash = maxf(0.0, hurt_flash - dt * 2.2)
 	if msg_timer > 0.0:
 		msg_timer = maxf(0.0, msg_timer - dt)
 		if msg_timer == 0.0:
@@ -285,6 +318,95 @@ func _touch_action_label() -> String:
 
 func _night_factor() -> float:
 	return clampf(absf(day_time - 0.5) * 2.0, 0.0, 1.0)
+
+
+func _weather_label() -> String:
+	match weather:
+		"rain": return "RAIN"
+		"storm": return "THUNDERSTORM"
+		_: return "CLEAR"
+
+
+## Weather rolls in and out on a timer: clear skies most of the time,
+## with rain and thunderstorms following. Storms bring lightning strikes
+## (flash + thunder) and both rains change which fish are biting.
+func _update_weather(dt: float) -> void:
+	weather_timer -= dt
+	if weather_timer <= 0.0:
+		weather_timer = randf_range(35.0, 80.0)
+		var roll := randf()
+		var next := "clear"
+		if roll > 0.78:
+			next = "storm"
+		elif roll > 0.45:
+			next = "rain"
+		if next != weather:
+			weather = next
+			GameState.play_sound("ui")
+			match weather:
+				"rain":
+					msg("RAIN ROLLS IN - DIFFERENT FISH ARE BITING")
+				"storm":
+					msg("THUNDERSTORM! STORM FISH ARE ON THE MOVE")
+				_:
+					msg("THE SKY CLEARS")
+			_build_ambient_fish()
+	if weather == "storm":
+		lightning_timer -= dt
+		if lightning_timer <= 0.0:
+			lightning_timer = randf_range(5.0, 12.0)
+			lightning_flash = 1.0
+			lightning_x = randf_range(view_size.x * 0.15, view_size.x * 0.85)
+			GameState.play_sound("thunder")
+	if lightning_flash > 0.0:
+		lightning_flash = maxf(0.0, lightning_flash - dt * 2.6)
+
+
+## Storm gloom, slanted rain streaks, splashes on the water and the
+## lightning bolt + flash. Drawn over the world, under the HUD.
+func _draw_weather(t: float) -> void:
+	var strength := 0.0
+	match weather:
+		"rain": strength = 0.55
+		"storm": strength = 1.0
+	if strength <= 0.0 and lightning_flash <= 0.0:
+		return
+	var full := Rect2(-60.0, -60.0, view_size.x + 120.0, view_size.y + 120.0)
+	if strength > 0.0:
+		draw_rect(full, Color(0.12, 0.16, 0.28, 0.24 * strength))
+		var drops := int(70.0 * strength)
+		var wind := 0.35 + strength * 0.35
+		for i in range(drops):
+			var sx := fposmod(float(i) * 149.0 + t * (60.0 + float(i % 5) * 12.0),
+					view_size.x + 160.0) - 80.0
+			var sy := fposmod(float(i) * 271.0 + t * (620.0 + float(i % 7) * 70.0),
+					view_size.y + 120.0) - 60.0
+			var drop_len := 15.0 + strength * 17.0 + float(i % 3) * 6.0
+			draw_line(Vector2(sx, sy), Vector2(sx - drop_len * wind, sy + drop_len),
+					Color(0.72, 0.83, 1.0, 0.16 + strength * 0.24), 2.0)
+		for i in range(int(18.0 * strength)):
+			var rx := fposmod(float(i) * 97.0 + t * 40.0, view_size.x)
+			var ry := water_line + fposmod(float(i) * 53.0 + t * 18.0,
+					maxf(1.0, view_size.y - water_line))
+			draw_line(Vector2(rx, ry), Vector2(rx + 8.0, ry),
+					Color(0.8, 0.9, 1.0, 0.14 + strength * 0.16), 2.0)
+	if lightning_flash > 0.0:
+		draw_rect(full, Color(0.85, 0.9, 1.0, lightning_flash * 0.42))
+		if lightning_flash > 0.55:
+			# jagged bolt; its shape is fixed per strike, so it only fades
+			var pts := PackedVector2Array()
+			var bx := lightning_x
+			var by := -10.0
+			pts.append(Vector2(bx, by))
+			var step := (water_line + 20.0) / 7.0
+			for i in range(7):
+				by += step
+				bx += sin(float(i) * 2.7 + lightning_x * 0.11) * 30.0
+				pts.append(Vector2(bx, by))
+			var bolt := Color(1.0, 1.0, 0.88, (lightning_flash - 0.55) * 1.8)
+			for i in range(pts.size() - 1):
+				draw_line(pts[i], pts[i + 1], Color(1.0, 1.0, 1.0, bolt.a * 0.45), 7.0)
+				draw_line(pts[i], pts[i + 1], bolt, 3.0)
 
 
 func _update_menu() -> void:
@@ -470,6 +592,10 @@ func _update_cast(dt: float) -> void:
 		bite_delay = randf_range(1.8, 6.5)
 		if is_night:
 			bite_delay *= 0.8
+		if weather == "rain":
+			bite_delay *= 0.85
+		elif weather == "storm":
+			bite_delay *= 0.7
 		if cast_bait != "":
 			bite_delay *= 0.7
 
@@ -526,9 +652,9 @@ func _is_big_fish() -> bool:
 
 
 func _select_catch() -> void:
-	var pool := FishDB.fish_by_region("open") if open_water else FishDB.fish_by_region(region)
+	var pool := FishDB.fish_pool("open" if open_water else region, weather)
 	if pool.size() == 0:
-		pool = FishDB.fish_by_region("pond")
+		pool = FishDB.fish_pool("pond", weather)
 	var weights := []
 	var total := 0.0
 	var boost: Array = []
@@ -537,13 +663,21 @@ func _select_catch() -> void:
 	for f in pool:
 		var w := float(f.get("catch_rate", 1.0))
 		var r := String(f.get("rarity", "Common"))
-		if cast_bait != "":
+		if bool(f.get("anywhere", false)):
+			# roaming monsters bite no matter what bait is on the hook
+			pass
+		elif cast_bait != "":
 			if boost.has(r):
 				w *= BAIT_BOOST
 		else:
 			# fishing bare: rare fish almost never show up - buy bait!
 			w *= float(NO_BAIT_PENALTY.get(r, 1.0))
 		if is_night and r == "Legendary":
+			w *= 1.5
+		if weather == "storm" and GameTheme.get_rarity_rate(r) < 0.25:
+			w *= 1.3
+		if String(f.get("weather", "")) != "":
+			# weather fish are hungry in their own weather
 			w *= 1.5
 		weights.append(w)
 		total += w
@@ -574,6 +708,7 @@ func _update_reel(dt: float) -> void:
 
 func _update_timing(dt: float) -> void:
 	var window := _timing_window()
+	var prev_pos := reel_pos
 	reel_pos += reel_dir * dt * (TIMING_SWEEP / maxf(window, 0.1))
 	if reel_pos > 1.0:
 		reel_pos = 1.0
@@ -582,12 +717,22 @@ func _update_timing(dt: float) -> void:
 		reel_pos = 0.0
 		reel_dir = 1.0
 	if _pressed():
-		_finish_timing()
+		_finish_timing(prev_pos)
 
 
-func _finish_timing() -> void:
+## The click is judged against the whole stretch the marker swept since
+## the previous frame, plus TIMING_GRACE - a press that arrives a frame
+## late still counts if the marker was in the green a moment ago.
+func _finish_timing(prev_pos: float = -1.0) -> void:
 	var window := _timing_window()
-	var ok: bool = absf(reel_pos - 0.5) < (window * TIMING_ACCEPT)
+	var good: float = window * TIMING_ACCEPT
+	var lo := 0.5 - good - TIMING_GRACE
+	var hi := 0.5 + good + TIMING_GRACE
+	var ok := reel_pos >= lo and reel_pos <= hi
+	if not ok and prev_pos >= 0.0:
+		var swept_lo := minf(prev_pos, reel_pos) - TIMING_GRACE
+		var swept_hi := maxf(prev_pos, reel_pos) + TIMING_GRACE
+		ok = swept_hi >= lo and swept_lo <= hi
 	_complete_catch(ok)
 
 
@@ -613,9 +758,13 @@ func _fight_scale() -> float:
 ## strained for TUG_PEG seconds straight, so one clumsy pause is
 ## survivable - the old build failed within half a second no matter what.
 func _update_tug(dt: float) -> void:
-	reel_hold = _reel_held()
+	# A click is a short pump rather than one frame of holding, so tapping
+	# in the green reels the fish in just like holding the button does.
+	var tapped := _pressed()
+	reel_hold = _reel_held() or tapped
+	var held_dt := dt + (TUG_TAP_PUMP if tapped else 0.0)
 	if reel_hold:
-		reel_tension += dt * TUG_BUILD * (2.0 - _fight_scale())
+		reel_tension += held_dt * TUG_BUILD * (2.0 - _fight_scale())
 	else:
 		reel_tension -= dt * TUG_DECAY
 	reel_tension = clampf(reel_tension, 0.0, 1.0)
@@ -628,6 +777,8 @@ func _update_tug(dt: float) -> void:
 		tug_peg_time = 0.0
 	if absf(reel_tension - 0.5) < _tug_band():
 		tug_ok_time += dt
+		if tapped:
+			tug_ok_time += TUG_TAP_PROGRESS
 	else:
 		# a short misstep only slows the landing, it does not reset it
 		tug_ok_time = maxf(0.0, tug_ok_time - dt * 0.5)
@@ -653,6 +804,10 @@ func _tug_band() -> float:
 func _complete_catch(success: bool) -> void:
 	reel_active = false
 	if success:
+		var f := FishDB.fish_data(catch_fish_id)
+		if bool(f.get("monster", false)) and randf() < MONSTER_SHOCK_CHANCE:
+			_monster_shock(f)
+			return
 		# The fish goes into the bucket; selling it in the Tackle Shop or the
 		# Fish Market is what pays - no coins at catch time (that used to pay
 		# every fish twice and wreck the economy).
@@ -669,6 +824,27 @@ func _complete_catch(success: bool) -> void:
 		GameState.play_sound("escape")
 		msg("THE FISH GOT AWAY...")
 		shake = 0.6
+
+
+## The Volt Serpent's bad side: it bites the hand that reels it in, costs
+## the fisher MONSTER_SHOCK_COST coins and escapes. The other 95% of the
+## time it goes straight into the bucket and can be sold like any fish.
+func _monster_shock(f: Dictionary) -> void:
+	var lost := mini(MONSTER_SHOCK_COST, GameState.coins)
+	GameState.lose_coins(MONSTER_SHOCK_COST)
+	state = STATE_WORLD
+	hooked = false
+	catch_fish_id = ""
+	bobber_pos = rod_tip
+	GameState.play_sound("shock")
+	shake = 1.0
+	flash = 0.6
+	hurt_flash = 1.0
+	# a bolt snaps out of the water where the serpent broke free
+	lightning_flash = 1.0
+	lightning_x = clampf(bobber_pos.x, 40.0, view_size.x - 40.0)
+	msg("%s SHOCKS YOU! -%d COINS - IT GOT AWAY" % [
+			String(f.get("name", "MONSTER")).to_upper(), lost])
 
 
 func _update_ambient(dt: float) -> void:
@@ -835,6 +1011,7 @@ func _build_shop() -> void:
 	scroll.offset_right = -24
 	scroll.offset_bottom = -72
 	p.add_child(scroll)
+	shop_scroll = scroll
 	shop_content = VBoxContainer.new()
 	shop_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	shop_content.add_theme_constant_override("separation", 4)
@@ -862,12 +1039,29 @@ var shop_coins_label: Label
 func _refresh_shop() -> void:
 	if shop_coins_label:
 		shop_coins_label.text = "COINS: %d" % GameState.coins
+	# Rebuilding the rows resets the ScrollContainer, so remember where the
+	# player was and put it back once the new rows have been laid out.
+	if shop_scroll != null:
+		shop_scroll_pos = shop_scroll.scroll_vertical
 	for c in shop_content.get_children():
+		shop_content.remove_child(c)
 		c.queue_free()
 	_shop_cat("Rods", "rods", _on_buy)
 	_shop_cat("Lines", "lines", _on_buy)
 	_shop_cat("Bait", "baits", _on_buy_bait)
 	_shop_cat("Bucket", "buckets", _on_buy)
+	_restore_shop_scroll(shop_scroll_pos)
+
+
+## Restore the shop scroll now and once more after the container has
+## re-sorted, since the scroll range is recalculated on the next frame.
+func _restore_shop_scroll(pos: int) -> void:
+	if shop_scroll == null:
+		return
+	shop_scroll.scroll_vertical = pos
+	await get_tree().process_frame
+	if is_instance_valid(shop_scroll):
+		shop_scroll.scroll_vertical = pos
 
 
 func _shop_cat(title: String, category: String, buy_func: Callable) -> void:
@@ -891,9 +1085,16 @@ func _shop_cat(title: String, category: String, buy_func: Callable) -> void:
 		var stat_l := UILib.label(row, _stat_line(category, d), 13, GameTheme.LEAF, false)
 		stat_l.position = Vector2(330, 10)
 		var cost := int(d.get("cost", 0))
-		# bait is a consumable and is always in stock; owned gear just equips
+		# Bait is a consumable: a bag with charges left can be equipped for
+		# free, so the player can switch between the baits they own.
+		var charges := GameState.bait_count(String(id)) if is_bait else 0
 		var btn_text := "BUY %d" % cost
-		if not is_bait:
+		if is_bait:
+			if equipped and charges > 0:
+				btn_text = "BUY %d" % cost
+			elif charges > 0:
+				btn_text = "USE x%d" % charges
+		else:
 			btn_text = "EQUIPPED" if equipped else ("EQUIP" if owned else "BUY %d" % cost)
 		var btn := UILib.button(row, btn_text, buy_func.bind(category, String(id)), 14, GameTheme.PANEL_LIGHT)
 		btn.custom_minimum_size = Vector2(120, 36)
@@ -912,8 +1113,13 @@ func _stat_line(category: String, d: Dictionary) -> String:
 	match category:
 		"rods": return "SPEED: %.1fx  WINDOW: %.2f" % [float(d.get("reel_speed", 1.0)), float(d.get("timing_window", 0.2))]
 		"lines": return "KEEP: %.0f%%" % [(1.0 - float(d.get("escape_chance", 0.3))) * 100.0]
-		"baits": return "%d CASTS - BAG %d - %s" % [int(d.get("charges", 1)),
-				GameState.bait_count(String(d.get("id", ""))), ", ".join(d.get("rarity_boost", []))]
+		"baits":
+			var bait_id := String(d.get("id", ""))
+			var line := "%d CASTS - BAG %d - %s" % [int(d.get("charges", 1)),
+					GameState.bait_count(bait_id), ", ".join(d.get("rarity_boost", []))]
+			if String(GameState.gear.get("bait", "")) == bait_id:
+				line += " - EQUIPPED"
+			return line
 		"buckets": return "CAPACITY: %d" % [int(d.get("capacity", 12))]
 		_: return ""
 
@@ -928,6 +1134,16 @@ func _on_buy(category: String, id: String) -> void:
 
 
 func _on_buy_bait(category: String, id: String) -> void:
+	# A bait already in the bag equips for free; otherwise this buys more.
+	var equipped := String(GameState.gear.get("bait", "")) == id
+	if not equipped and GameState.bait_count(id) > 0:
+		GameState.activate_bait(id)
+		GameState.play_sound("ui")
+		msg("%s EQUIPPED - %d CASTS LEFT" % [
+				String(ShopDB.item("baits", id).get("name", "BAIT")).to_upper(),
+				GameState.bait_count(id)])
+		_refresh_shop()
+		return
 	# buy_item adds the charges and equips the bait
 	if GameState.buy_item(category, id):
 		GameState.play_sound("ui")
@@ -1012,6 +1228,7 @@ func _draw() -> void:
 		_draw_bank()
 	_draw_fisher(t)
 	_draw_line_and_bobber(t)
+	_draw_weather(t)
 
 	draw_set_transform(Vector2.ZERO)
 
@@ -1023,6 +1240,9 @@ func _draw() -> void:
 		_draw_reel_meter()
 	if state == STATE_CAUGHT:
 		_draw_catch_popup()
+	if hurt_flash > 0.0:
+		draw_rect(Rect2(-40.0, -40.0, view_size.x + 80.0, view_size.y + 80.0),
+				Color(1.0, 0.18, 0.28, hurt_flash * 0.32))
 	if flash > 0.0:
 		draw_rect(Rect2(-40.0, -40.0, view_size.x + 80.0, view_size.y + 80.0),
 				Color(1.0, 1.0, 1.0, flash * 0.45))
@@ -1459,8 +1679,8 @@ func _draw_reel_meter() -> void:
 func _draw_hud() -> void:
 	_hud_panel("COINS %d" % GameState.coins, true)
 	var area_label := "OPEN WATER" if open_water else String(FishDB.REGION_DISPLAY.get(region, region))
-	var rt := "%s  %s" % [area_label.to_upper(),
-			"NIGHT" if is_night else "DAY"]
+	var rt := "%s  %s  %s" % [area_label.to_upper(),
+			"NIGHT" if is_night else "DAY", _weather_label()]
 	var left_r: Rect2 = _hud_panel("BUCKET %d/%d" % [GameState.inventory_count(), GameState.bucket_capacity()], false)
 	PixFont.draw_text_shadowed(self, Vector2(12.0, 54.0), rt,
 			Color("#e9d8a8"), Color("#050a12", 0.6), 2, 1, 1)

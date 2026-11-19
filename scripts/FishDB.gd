@@ -300,6 +300,50 @@ static var FISH := {
 		"weight_kg": [30.0, 90.0], "coin": 950, "catch_rate": 0.035,
 		"desc": "Its sail rises like a banner over the waves.",
 	},
+	# --- The monster: roams every water, and it bites back when you pull it in ---
+	"volt_serpent": {
+		"id": "volt_serpent", "name": "Volt Serpent", "rarity": "Legendary", "region": "open",
+		"anywhere": true, "monster": true,
+		"shape": "serpent", "pattern": "lightning",
+		"palette": {"body": "#241c42", "belly": "#4fd7f2", "fin": "#38e0ff", "eye": "#ffe45c"},
+		"features": ["big_eye", "fangs", "spikes", "glow"],
+		"weight_kg": [12.0, 45.0], "coin": 1200, "catch_rate": 0.09,
+		"desc": "A living lightning bolt. It bites back - and it is fast.",
+	},
+	# --- Weather fish: they only bite in their own weather (see fish_pool) ---
+	"rain_dace": {
+		"id": "rain_dace", "name": "Rain Dace", "rarity": "Common", "region": "pond",
+		"weather": "rain",
+		"shape": "minnow", "pattern": "sparkle",
+		"palette": {"body": "#6f9fc9", "belly": "#d2e8f6", "fin": "#4a76a8", "eye": "#141d27"},
+		"weight_kg": [0.1, 0.4], "coin": 22, "catch_rate": 0.5,
+		"desc": "Dances at the surface when the rain falls.",
+	},
+	"rainbow_trout": {
+		"id": "rainbow_trout", "name": "Rainbow Trout", "rarity": "Uncommon", "region": "river",
+		"weather": "rain",
+		"shape": "long", "pattern": "sparkle",
+		"palette": {"body": "#7fb0c9", "belly": "#f2c6d8", "fin": "#5f86b0", "eye": "#141d27"},
+		"weight_kg": [0.5, 2.2], "coin": 65, "catch_rate": 0.45,
+		"desc": "Its colors shine brightest under the rain.",
+	},
+	"thunder_pike": {
+		"id": "thunder_pike", "name": "Thunder Pike", "rarity": "Epic", "region": "lake",
+		"weather": "storm",
+		"shape": "long", "pattern": "lightning",
+		"palette": {"body": "#3c4a66", "belly": "#a8c8e0", "fin": "#25324a", "eye": "#ffe08a"},
+		"features": ["fangs", "spikes"],
+		"weight_kg": [4.0, 15.0], "coin": 340, "catch_rate": 0.35,
+		"desc": "Only hunts while the thunder rolls.",
+	},
+	"storm_herring": {
+		"id": "storm_herring", "name": "Storm Herring", "rarity": "Rare", "region": "open",
+		"weather": "storm",
+		"shape": "minnow", "pattern": "glow_veins",
+		"palette": {"body": "#4a6b8a", "belly": "#bfe4f2", "fin": "#2f4a66", "eye": "#141d27"},
+		"weight_kg": [1.0, 4.0], "coin": 190, "catch_rate": 0.4,
+		"desc": "Rides the storm swell in silver shoals.",
+	},
 }
 
 static func fish_data(fish_id: String) -> Dictionary:
@@ -315,3 +359,21 @@ static func fish_by_region(region: String) -> Array[Dictionary]:
 
 static func all_ids() -> Array:
 	return FISH.keys()
+
+## Everything that can bite at a spot: the region's own table plus the
+## roaming monsters (fish flagged "anywhere"), filtered by the weather -
+## a fish with a "weather" tag only bites in that weather.
+static func fish_pool(region: String, weather := "") -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for f in fish_by_region(region):
+		out.append(f)
+	for fid in FISH.keys():
+		var roaming: Dictionary = FISH[fid]
+		if bool(roaming.get("anywhere", false)) and not out.has(roaming):
+			out.append(roaming)
+	var filtered: Array[Dictionary] = []
+	for f in out:
+		var need := String(f.get("weather", ""))
+		if need == "" or need == weather:
+			filtered.append(f)
+	return filtered
