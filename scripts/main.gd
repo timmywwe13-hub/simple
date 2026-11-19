@@ -28,6 +28,12 @@ const TUG_BAND := 0.2
 const TUG_HOLD := 1.2
 const TUG_PEG := 0.8
 
+## Rare fish are harder to come by without bait bought at the shop: their
+## bite odds are cut hard when fishing bare, and the matching bait instead
+## boosts them (BAIT_BOOST). Bait is a consumable - one charge per cast.
+const NO_BAIT_PENALTY := {"Rare": 0.45, "Epic": 0.30, "Legendary": 0.20}
+const BAIT_BOOST := 2.2
+
 var state := STATE_MENU
 var region := "pond"
 
@@ -51,6 +57,9 @@ var catch_weight := 0.0
 var catch_new := false
 var catch_rarity := ""
 var catch_coins := 0
+## Bait used for the current cast ("" = fishing bare, caught via
+## GameState.consume_bait() when the cast starts).
+var cast_bait := ""
 var shake := 0.0
 var flash := 0.0
 var msg_timer := 0.0
@@ -445,6 +454,8 @@ func _cast_start() -> void:
 	cast_travel = 0.0
 	bobber_home = cast_target
 	bobber_pos = rod_tip
+	# each cast uses one charge of the equipped bait (bought at the shop)
+	cast_bait = GameState.consume_bait()
 	GameState.play_sound("cast")
 
 
@@ -459,7 +470,7 @@ func _update_cast(dt: float) -> void:
 		bite_delay = randf_range(1.8, 6.5)
 		if is_night:
 			bite_delay *= 0.8
-		if String(GameState.gear.get("bait", "")) != "":
+		if cast_bait != "":
 			bite_delay *= 0.7
 
 
@@ -520,14 +531,18 @@ func _select_catch() -> void:
 		pool = FishDB.fish_by_region("pond")
 	var weights := []
 	var total := 0.0
+	var boost: Array = []
+	if cast_bait != "":
+		boost = ShopDB.item("baits", cast_bait).get("rarity_boost", [])
 	for f in pool:
 		var w := float(f.get("catch_rate", 1.0))
 		var r := String(f.get("rarity", "Common"))
-		var bait := String(GameState.gear.get("bait", ""))
-		if bait != "":
-			var boost: Array = ShopDB.item("baits", bait).get("rarity_boost", [])
+		if cast_bait != "":
 			if boost.has(r):
-				w *= 2.0
+				w *= BAIT_BOOST
+		else:
+			# fishing bare: rare fish almost never show up - buy bait!
+			w *= float(NO_BAIT_PENALTY.get(r, 1.0))
 		if is_night and r == "Legendary":
 			w *= 1.5
 		weights.append(w)
@@ -558,7 +573,7 @@ func _update_reel(dt: float) -> void:
 
 
 func _update_timing(dt: float) -> void:
-	var window: float = float(ShopDB.item("rods", String(GameState.gear.get("rod", "rod_stick"))).get("timing_window", 0.18))
+	var window := _timing_window()
 	reel_pos += reel_dir * dt * (TIMING_SWEEP / maxf(window, 0.1))
 	if reel_pos > 1.0:
 		reel_pos = 1.0
@@ -571,9 +586,25 @@ func _update_timing(dt: float) -> void:
 
 
 func _finish_timing() -> void:
-	var window: float = float(ShopDB.item("rods", String(GameState.gear.get("rod", "rod_stick"))).get("timing_window", 0.18))
+	var window := _timing_window()
 	var ok: bool = absf(reel_pos - 0.5) < (window * TIMING_ACCEPT)
 	_complete_catch(ok)
+
+
+## Timing window of the equipped rod. Rarer fish fight a little harder:
+## Rare / Epic / Legendary catches shrink the green zone slightly.
+func _timing_window() -> float:
+	var base := float(ShopDB.item("rods", String(GameState.gear.get("rod", "rod_stick"))).get("timing_window", 0.18))
+	return base * _fight_scale()
+
+
+## 1.0 for common fish, a touch tighter for the rare ones.
+func _fight_scale() -> float:
+	match catch_rarity:
+		"Legendary": return 0.82
+		"Epic": return 0.88
+		"Rare": return 0.94
+		_: return 1.0
 
 
 ## Big-fish tug-of-war: holding reels in and raises tension, releasing
@@ -584,7 +615,7 @@ func _finish_timing() -> void:
 func _update_tug(dt: float) -> void:
 	reel_hold = _reel_held()
 	if reel_hold:
-		reel_tension += dt * TUG_BUILD
+		reel_tension += dt * TUG_BUILD * (2.0 - _fight_scale())
 	else:
 		reel_tension -= dt * TUG_DECAY
 	reel_tension = clampf(reel_tension, 0.0, 1.0)
@@ -616,7 +647,7 @@ func _reel_held() -> bool:
 ## ShopDB escape_chance), so the upgrade finally matters in the fight.
 func _tug_band() -> float:
 	var line := ShopDB.item("lines", String(GameState.gear.get("line", "line_nylon")))
-	return TUG_BAND + (0.3 - float(line.get("escape_chance", 0.3))) * 0.5
+	return (TUG_BAND + (0.3 - float(line.get("escape_chance", 0.3))) * 0.5) * _fight_scale()
 
 
 func _complete_catch(success: bool) -> void:
@@ -625,7 +656,7 @@ func _complete_catch(success: bool) -> void:
 		# The fish goes into the bucket; selling it in the Tackle Shop or the
 		# Fish Market is what pays - no coins at catch time (that used to pay
 		# every fish twice and wreck the economy).
-		GameState.record_catch(catch_fish_id, catch_weight, "open" if open_water else region)
+		GameState.record_catch(catch_fish_id, catch_weight, "open" if open_water else region, is_night)
 		state = STATE_CAUGHT
 		if catch_new and GameTheme.get_rarity_rate(catch_rarity) < 0.1:
 			flash = 1.0
@@ -846,8 +877,9 @@ func _shop_cat(title: String, category: String, buy_func: Callable) -> void:
 	var db: Dictionary = ShopDB.category(category)
 	for id in db.keys():
 		var d: Dictionary = db[id]
-		var owned := bool(d.get("owned", false))
-		var equipped := String(GameState.gear.get(category, "")) == String(id)
+		var is_bait := category == "baits"
+		var owned := bool(d.get("owned", false)) and not is_bait
+		var equipped := String(GameState.gear.get(GameState.gear_key(category), "")) == String(id)
 		var row := Control.new()
 		row.custom_minimum_size = Vector2(600.0, 50.0)
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -859,7 +891,10 @@ func _shop_cat(title: String, category: String, buy_func: Callable) -> void:
 		var stat_l := UILib.label(row, _stat_line(category, d), 13, GameTheme.LEAF, false)
 		stat_l.position = Vector2(330, 10)
 		var cost := int(d.get("cost", 0))
-		var btn_text := "OWNED" if owned else ("EQUIPPED" if equipped else ("BUY %d" % cost))
+		# bait is a consumable and is always in stock; owned gear just equips
+		var btn_text := "BUY %d" % cost
+		if not is_bait:
+			btn_text = "EQUIPPED" if equipped else ("EQUIP" if owned else "BUY %d" % cost)
 		var btn := UILib.button(row, btn_text, buy_func.bind(category, String(id)), 14, GameTheme.PANEL_LIGHT)
 		btn.custom_minimum_size = Vector2(120, 36)
 		btn.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
@@ -877,7 +912,8 @@ func _stat_line(category: String, d: Dictionary) -> String:
 	match category:
 		"rods": return "SPEED: %.1fx  WINDOW: %.2f" % [float(d.get("reel_speed", 1.0)), float(d.get("timing_window", 0.2))]
 		"lines": return "KEEP: %.0f%%" % [(1.0 - float(d.get("escape_chance", 0.3))) * 100.0]
-		"baits": return "BOOSTS: %s" % [", ".join(d.get("rarity_boost", []))]
+		"baits": return "%d CASTS - BAG %d - %s" % [int(d.get("charges", 1)),
+				GameState.bait_count(String(d.get("id", ""))), ", ".join(d.get("rarity_boost", []))]
 		"buckets": return "CAPACITY: %d" % [int(d.get("capacity", 12))]
 		_: return ""
 
@@ -892,8 +928,8 @@ func _on_buy(category: String, id: String) -> void:
 
 
 func _on_buy_bait(category: String, id: String) -> void:
+	# buy_item adds the charges and equips the bait
 	if GameState.buy_item(category, id):
-		GameState.activate_bait(id)
 		GameState.play_sound("ui")
 		_refresh_shop()
 	else:
@@ -1412,7 +1448,7 @@ func _draw_reel_meter() -> void:
 		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), "TENSION - HOLD TO REEL IN - KEEP IT GREEN",
 				Color("#cfe0ec"), Color("#050a12", 0.6), 2, 1, 1)
 	else:
-		var window: float = float(ShopDB.item("rods", String(GameState.gear.get("rod", "rod_stick"))).get("timing_window", 0.18))
+		var window := _timing_window()
 		var good := window * TIMING_ACCEPT
 		_pixel_rect(Rect2(bar_x + bar_w * (0.5 - good), bar_y, bar_w * good * 2.0, 12.0), GameTheme.LEAF)
 		_pixel_rect(Rect2(bar_x + bar_w * reel_pos - 2.0, bar_y - 5.0, 4.0, 22.0), GameTheme.CREAM)
@@ -1434,6 +1470,11 @@ func _draw_hud() -> void:
 	PixFont.draw_text_shadowed(self,
 			Vector2(view_size.x - PixFont.text_width(boat_txt, 2) - 12.0, 52.0),
 			boat_txt, Color("#e9d8a8"), Color("#050a12", 0.6), 2, 1, 1)
+	var bait_txt := _bait_hud_text()
+	var bait_c := Color("#8fd9a8") if String(GameState.gear.get("bait", "")) != "" else Color("#e0906e")
+	PixFont.draw_text_shadowed(self,
+			Vector2(view_size.x - PixFont.text_width(bait_txt, 2) - 12.0, 72.0),
+			bait_txt, bait_c, Color("#050a12", 0.6), 2, 1, 1)
 
 	if msg_text != "":
 		var txt := msg_text
@@ -1455,6 +1496,16 @@ func _draw_hud() -> void:
 		var hw := PixFont.text_width(hint, 2)
 		PixFont.draw_text_shadowed(self, Vector2((view_size.x - hw) * 0.5, view_size.y - 26.0), hint,
 				Color("#c8d6e2"), Color("#050a12", 0.6), 2, 1, 1)
+
+
+## Bait is bought at the shop and used up one charge per cast - without
+## it rare fish barely bite, so the HUD keeps nudging the player.
+func _bait_hud_text() -> String:
+	var bait_id := String(GameState.gear.get("bait", ""))
+	if bait_id == "":
+		return "NO BAIT - RARE FISH BARELY BITE - BUY BAIT IN THE SHOP"
+	return "BAIT: %s x%d" % [String(ShopDB.item("baits", bait_id).get("name", "Bait")).to_upper(),
+			GameState.bait_count(bait_id)]
 
 
 func _draw_menu() -> void:

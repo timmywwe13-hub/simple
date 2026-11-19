@@ -23,13 +23,19 @@ static var LINES := {
 		"escape_chance": 0.12, "desc": "Rare fish stay on.", "owned": false},
 }
 
+## Bait is a consumable bought at the shop: every purchase adds `charges`
+## casts to the bag, and each cast uses one. Rare fish almost never bite
+## without it - see main.gd NO_BAIT_PENALTY.
 static var BAITS := {
 	"bait_worm": {"id": "bait_worm", "name": "Worm Bait", "cost": 30,
-		"duration_sec": 60, "rarity_boost": ["Common", "Uncommon"], "desc": "Attracts common fish for 60s."},
+		"charges": 5, "duration_sec": 60, "rarity_boost": ["Common", "Uncommon"],
+		"desc": "5 casts that draw common and uncommon fish."},
 	"bait_minnow": {"id": "bait_minnow", "name": "Minnow Bait", "cost": 90,
-		"duration_sec": 90, "rarity_boost": ["Uncommon", "Rare"], "desc": "Draws rarer fish for 90s."},
+		"charges": 4, "duration_sec": 90, "rarity_boost": ["Uncommon", "Rare"],
+		"desc": "4 casts that draw rare fish. Rare fish need bait!"},
 	"bait_glow": {"id": "bait_glow", "name": "Glow Bait", "cost": 220,
-		"duration_sec": 120, "rarity_boost": ["Rare", "Epic", "Legendary"], "desc": "Night-only lure for deep fish."},
+		"charges": 3, "duration_sec": 120, "rarity_boost": ["Rare", "Epic", "Legendary"],
+		"desc": "3 casts of the deep: epic and legendary fish."},
 }
 
 static var BUCKETS := {

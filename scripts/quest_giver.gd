@@ -30,7 +30,8 @@ func interact() -> void:
 		title_l.position = Vector2(12.0, 3.0)
 		var desc_l := UILib.label(row, String(q.get("desc", "")), 12, Color("#a8c0cc"))
 		desc_l.position = Vector2(12.0, 23.0)
-		var prog_text := "DONE" if done else "PROGRESS %d / %d" % [int(q.get("progress", 0)), int(q.get("target", 1))]
+		var need := GameState.quest_need(q)
+		var prog_text := "DONE" if done else "PROGRESS %d / %d" % [int(q.get("progress", 0)), need]
 		var prog_l := UILib.label(row, prog_text, 12, GameTheme.LEAF if done else Color("#e9d8a8"))
 		prog_l.position = Vector2(12.0, 41.0)
 		var reward_l := UILib.label(row, "REWARD %d" % int(q.get("reward", 0)), 13, UILib.GOLD, true)

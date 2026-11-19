@@ -60,6 +60,14 @@ res://scripts/touch_controls.gd # On-screen touch controls for phones/tablets
 res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 ```
 
+## Updates (v1.4)
+
+- **20 new fish (37 species total)** - Bluegill, Golden Koi, Dusky Carp, Puddle Puffer, Rainbow Darter, Emerald Eel, Northern Pike, Crimson Gar, Kelp Grouper, Tiger Muskie, Lake Sturgeon, Opaline Cichlid, Hammerhead Shark, Manta Ray, Deep Sea Angler, Viperfish, Goblin Shark, Giant Oarfish, Wahoo and Sailfish, across all five waters. New body shapes (puffer, shark, ray, deep-sea, ribbon), new patterns (checker, speckle, scales, glow veins) and species features (whiskers, bills, sails, spikes, fangs, lanterns, wings, crests, streamers, hammerhead bar) make every fish read as itself - including whiskers on the catfish and arowana, a bill on the marlin and swordfish, and a lantern on the lanternfish
+- **Bait is now a real consumable** - buy bait packs (Worm / Minnow / Glow) at the Tackle Shop or the General Store; each pack holds several casts and every cast uses one. Rare fish barely bite without it (their odds are cut hard when fishing bare) and matching bait boosts them instead, so rare fish means a trip to the shop. The HUD shows the equipped bait and casts left
+- **15 new quests (21 total)** - bait shopping, baited casts, night catches, a 15 kg trophy, Rare/Epic/Legendary hunts, per-region catch quests (River, Lake, Deep Sea, Open Water), 10/25-species discovery, and sales milestones; claim them all at the Quest Board in Town. Fixed: quest progress for string targets (rarity/region) used to compare against the wrong number, so some quests completed instantly
+- **Rare fish fight harder** - Rare / Epic / Legendary catches shrink the green timing zone and the safe tension band a little, and reel tension builds faster
+- **Gear swaps are free** - owned rods, lines and buckets can be re-equipped from the shop without re-buying them (bait stays a consumable)
+
 ## Bug fixes (v1.3)
 
 - **Mobile support**: on phones/tablets the game shows on-screen touch controls - a movement pad, a big CAST/HOOK/REEL/HOLD button, and small buttons for rod, boat, fishing spots `1`–`4`, the Fish Index and the menu. Tap the water to aim and cast; multi-touch works (walk with the left thumb, fish with the right). The buttons feed the normal input actions so the rest of the game is unchanged

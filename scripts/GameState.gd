@@ -11,7 +11,9 @@ var gear := {"rod": "rod_stick", "line": "line_nylon", "bait": "", "bucket": "bu
 	"boat": "boat_raft"}
 var owned_boats: Array = ["boat_raft"]
 var unlocked_regions := ["pond"]
-var active_bait_end := 0.0
+## Bait is a consumable bought at the shop: bait id -> casts left in the bag.
+## Each cast with bait equipped uses one; without bait rare fish barely bite.
+var bait_counts := {}
 var total_caught := 0
 ## True once a session is underway (the player started fishing or travelled).
 ## Used so returning from the Town resumes the fishing scene instead of
@@ -24,20 +26,57 @@ var sfx_cache := {}
 var SAVE_PATH := "user://save.json"
 var AUTO_SAVE := true
 
-var quests := [
-	{"id": "first_catch", "title": "First Catch", "desc": "Catch any fish.", "done": false, "claimed": false,
-	 "kind": "catch_any", "target": 1, "progress": 0, "reward": 30},
-	{"id": "first_rare", "title": "Rare Find", "desc": "Catch a Rare fish.", "done": false, "claimed": false,
-	 "kind": "catch_rarity", "target": "Rare", "progress": 0, "reward": 75},
-	{"id": "collector", "title": "Collector", "desc": "Catch one of each pond species.", "done": false, "claimed": false,
-	 "kind": "region_complete", "target": "pond", "progress": 0, "reward": 150},
-	{"id": "seasoned", "title": "Seasoned Angler", "desc": "Catch 5 fish.", "done": false, "claimed": false,
-	 "kind": "catch_any", "target": 5, "progress": 0, "reward": 60},
-	{"id": "market_day", "title": "Market Day", "desc": "Sell 10 fish at the Fish Market.", "done": false, "claimed": false,
-	 "kind": "sell_count", "target": 10, "progress": 0, "reward": 120},
-	{"id": "seafarer", "title": "Seafarer", "desc": "Buy a real boat at the Boat Dealer.", "done": false, "claimed": false,
-	 "kind": "own_boat", "target": 1, "progress": 0, "reward": 200},
+## Quest definitions. "kind" is the event that advances it, "target" the
+## thing being counted (a number, a rarity, or a region), and "need" the
+## amount required. Saved progress is merged with these on load, so new
+## quests show up for old saves too.
+const QUEST_DEFS := [
+	{"id": "first_catch", "title": "First Catch", "desc": "Catch any fish.",
+		"kind": "catch_any", "target": 1, "need": 1, "reward": 30},
+	{"id": "first_rare", "title": "Rare Find", "desc": "Catch a Rare fish.",
+		"kind": "catch_rarity", "target": "Rare", "need": 1, "reward": 75},
+	{"id": "collector", "title": "Collector", "desc": "Catch one of each pond species.",
+		"kind": "region_complete", "target": "pond", "need": 1, "reward": 150},
+	{"id": "seasoned", "title": "Seasoned Angler", "desc": "Catch 5 fish.",
+		"kind": "catch_any", "target": 5, "need": 5, "reward": 60},
+	{"id": "market_day", "title": "Market Day", "desc": "Sell 10 fish at the Fish Market.",
+		"kind": "sell_count", "target": 10, "need": 10, "reward": 120},
+	{"id": "seafarer", "title": "Seafarer", "desc": "Buy a real boat at the Boat Dealer.",
+		"kind": "own_boat", "target": 1, "need": 1, "reward": 200},
+	# --- 15 new quests (v1.4) ---
+	{"id": "bait_buyer", "title": "Bait Shopper", "desc": "Buy bait at the shop.",
+		"kind": "buy_bait", "target": 1, "need": 1, "reward": 40},
+	{"id": "bait_fisher", "title": "Well Prepared", "desc": "Make 3 casts with bait on the hook.",
+		"kind": "use_bait", "target": 3, "need": 3, "reward": 70},
+	{"id": "night_owl", "title": "Night Owl", "desc": "Catch 5 fish at night.",
+		"kind": "catch_night", "target": 5, "need": 5, "reward": 110},
+	{"id": "big_one", "title": "The Big One", "desc": "Catch a fish heavier than 15 kg.",
+		"kind": "catch_weight", "target": 15, "need": 1, "reward": 180},
+	{"id": "rare_trio", "title": "Rare Company", "desc": "Catch 3 Rare fish.",
+		"kind": "catch_rarity", "target": "Rare", "need": 3, "reward": 200},
+	{"id": "epic_encounter", "title": "Epic Encounter", "desc": "Catch an Epic fish.",
+		"kind": "catch_rarity", "target": "Epic", "need": 1, "reward": 300},
+	{"id": "legend_seeker", "title": "Legend Seeker", "desc": "Catch a Legendary fish.",
+		"kind": "catch_rarity", "target": "Legendary", "need": 1, "reward": 600},
+	{"id": "river_regular", "title": "River Regular", "desc": "Catch 8 fish in the River.",
+		"kind": "region_catch", "target": "river", "need": 8, "reward": 120},
+	{"id": "lake_life", "title": "Lake Life", "desc": "Catch 8 fish in the Lake.",
+		"kind": "region_catch", "target": "lake", "need": 8, "reward": 150},
+	{"id": "deep_diver", "title": "Into the Deep", "desc": "Catch 6 fish in the Deep Sea.",
+		"kind": "region_catch", "target": "ocean", "need": 6, "reward": 240},
+	{"id": "open_water", "title": "Open Water", "desc": "Catch 5 fish in Open Water.",
+		"kind": "region_catch", "target": "open", "need": 5, "reward": 170},
+	{"id": "species_10", "title": "Species Collector", "desc": "Discover 10 different species.",
+		"kind": "unique_species", "target": 10, "need": 10, "reward": 220},
+	{"id": "species_25", "title": "Master Angler", "desc": "Discover 25 different species.",
+		"kind": "unique_species", "target": 25, "need": 25, "reward": 500},
+	{"id": "coin_500", "title": "Fish Merchant", "desc": "Earn 500 coins from selling fish.",
+		"kind": "sell_coins", "target": 500, "need": 500, "reward": 150},
+	{"id": "sell_30", "title": "Big Haul", "desc": "Sell 30 fish in total.",
+		"kind": "sell_count", "target": 30, "need": 30, "reward": 260},
 ]
+
+var quests: Array = []
 
 func _ready() -> void:
 	_load_game()
@@ -52,6 +91,7 @@ func save_game() -> void:
 		"unlocked_regions": unlocked_regions,
 		"owned_boats": owned_boats,
 		"total_caught": total_caught,
+		"bait_counts": bait_counts,
 		"quests": quests,
 	}
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
@@ -63,12 +103,14 @@ func _load_game() -> void:
 	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
 	if not file:
 		_init_index()
+		quests = _merge_quests([])
 		save_game()
 		return
 	var data: Dictionary = file.get_var()
 	file.close()
 	if typeof(data) != TYPE_DICTIONARY:
 		_init_index()
+		quests = _merge_quests([])
 		save_game()
 		return
 	coins = int(data.get("coins", 50))
@@ -81,8 +123,30 @@ func _load_game() -> void:
 	owned_boats = data.get("owned_boats", ["boat_raft"])
 	unlocked_regions = data.get("unlocked_regions", ["pond"])
 	total_caught = int(data.get("total_caught", 0))
-	quests = data.get("quests", quests)
+	var saved_baits: Variant = data.get("bait_counts", {})
+	bait_counts = saved_baits if typeof(saved_baits) == TYPE_DICTIONARY else {}
+	# fresh quest metadata + any missing (new) quests, keeping saved progress
+	quests = _merge_quests(data.get("quests", []))
 	_init_index()
+
+## Build the live quest list from QUEST_DEFS, carrying progress / done /
+## claimed over from the saved list (old saves gain the new quests).
+func _merge_quests(saved: Array) -> Array:
+	var by_id := {}
+	for q in saved:
+		if typeof(q) == TYPE_DICTIONARY:
+			by_id[String(q.get("id", ""))] = q
+	var out: Array = []
+	for def in QUEST_DEFS:
+		var q: Dictionary = def.duplicate(true)
+		var old: Dictionary = by_id.get(String(q.get("id", "")), {})
+		q["progress"] = int(old.get("progress", 0))
+		q["done"] = bool(old.get("done", false))
+		q["claimed"] = bool(old.get("claimed", false))
+		if int(q["progress"]) < quest_need(q):
+			q["done"] = false
+		out.append(q)
+	return out
 
 func _init_index() -> void:
 	var ids := FishDB.all_ids()
@@ -99,7 +163,7 @@ func rarity_of(fish_id: String) -> String:
 	var f: Dictionary = FishDB.fish_data(fish_id)
 	return String(f.get("rarity", "Common"))
 
-func record_catch(fish_id: String, weight: float, region: String) -> void:
+func record_catch(fish_id: String, weight: float, region: String, night := false) -> void:
 	var entry: Dictionary = index.get(fish_id, {"caught": false, "count": 0, "pb_weight": 0.0, "region": region})
 	if not entry.get("caught", false):
 		entry["caught"] = true
@@ -117,7 +181,7 @@ func record_catch(fish_id: String, weight: float, region: String) -> void:
 	index[fish_id] = entry
 	inventory.append({"fish_id": fish_id, "weight": weight, "region": region, "caught_at": Time.get_ticks_msec()})
 	total_caught += 1
-	_check_quests("catch", fish_id)
+	_check_quests("catch", fish_id, {"region": region, "weight": weight, "night": night})
 	if AUTO_SAVE:
 		save_game()
 
@@ -152,7 +216,7 @@ func sell_all(mult: float = 1.0) -> int:
 		total += int(round(coin_value(fid, w) * mult))
 	inventory.clear()
 	add_coins(total)
-	_check_quests("sell", "")
+	_check_quests("sell", "", {"coins": total})
 	if AUTO_SAVE:
 		save_game()
 	return total
@@ -167,7 +231,7 @@ func sell_one(index: int, mult: float = 1.0) -> int:
 	var value := int(round(coin_value(fid, w) * mult))
 	inventory.remove_at(index)
 	add_coins(value)
-	_check_quests("sell", "")
+	_check_quests("sell", "", {"coins": value})
 	if AUTO_SAVE:
 		save_game()
 	return value
@@ -294,57 +358,135 @@ func completion_percent() -> float:
 func can_afford(cost: int) -> bool:
 	return coins >= cost
 
+## The gear slot a shop category equips into ("rods" -> "rod" ...).
+func gear_key(category: String) -> String:
+	match category:
+		"rods": return "rod"
+		"lines": return "line"
+		"baits": return "bait"
+		"buckets": return "bucket"
+		"boats": return "boat"
+		_: return category
+
+## Buy / equip a shop item. Bait is a consumable: a purchase adds charges
+## to the bag and equips it. Already-owned gear (rods, lines, buckets)
+## equips for free so items can be swapped without re-buying them.
 func buy_item(category: String, id: String) -> bool:
-	var cost := _cost(category, id)
+	var d: Dictionary = ShopDB.item(category, id)
+	if d.is_empty():
+		return false
+	if category == "baits":
+		var bait_cost := int(d.get("cost", 0))
+		if not can_afford(bait_cost):
+			return false
+		coins -= bait_cost
+		bait_counts[id] = bait_count(id) + int(d.get("charges", 1))
+		gear["bait"] = id
+		_check_quests("buy_bait", "")
+		save_game()
+		return true
+	var already := bool(d.get("owned", false))
+	var cost := 0 if already else int(d.get("cost", 0))
 	if not can_afford(cost):
 		return false
-	if category == "rods":
-		gear["rod"] = id
-	elif category == "lines":
-		gear["line"] = id
-	elif category == "baits":
-		gear["bait"] = id
-	elif category == "buckets":
-		gear["bucket"] = id
-	ShopDB.set_owned(category, id, true)
-	coins -= cost
+	gear[gear_key(category)] = id
+	if not already:
+		ShopDB.set_owned(category, id, true)
+		coins -= cost
 	save_game()
 	return true
 
-func _cost(category: String, id: String) -> int:
-	var d: Dictionary = ShopDB.item(category, id)
-	return int(d.get("cost", 0))
+## How many casts of a bait are left in the bag.
+func bait_count(id: String) -> int:
+	return int(bait_counts.get(id, 0))
 
-func update_bait(_dt: float) -> void:
-	var now := Time.get_ticks_msec() / 1000.0
-	if active_bait_end > 0 and now > active_bait_end:
-		gear["bait"] = ""
-		active_bait_end = 0.0
-
+## Equip a bought bait (only if the bag holds any).
 func activate_bait(bait_id: String) -> void:
-	var now := Time.get_ticks_msec() / 1000.0
-	var d: Dictionary = ShopDB.item("baits", bait_id)
-	active_bait_end = now + float(d.get("duration_sec", 60))
+	if bait_count(bait_id) <= 0:
+		return
 	gear["bait"] = bait_id
 
-func _check_quests(kind: String, fish_id: String) -> void:
+## Use one charge of the equipped bait for the cast that is starting.
+## Returns the bait id used ("" when fishing bare - rare fish hate that).
+func consume_bait() -> String:
+	var id := String(gear.get("bait", ""))
+	if id == "":
+		return ""
+	if bait_count(id) <= 0:
+		gear["bait"] = ""
+		return ""
+	bait_counts[id] = bait_count(id) - 1
+	_check_quests("use_bait", "")
+	if AUTO_SAVE:
+		save_game()
+	return id
+
+## Unequip bait once the bag runs dry.
+func update_bait(_dt: float) -> void:
+	var id := String(gear.get("bait", ""))
+	if id != "" and bait_count(id) <= 0:
+		gear["bait"] = ""
+
+## The amount a quest needs before it is done. Region-collection quests
+## scale with how many species live in that region (new fish included).
+func quest_need(q: Dictionary) -> int:
+	if String(q.get("kind", "")) == "region_complete":
+		return maxi(1, FishDB.fish_by_region(String(q.get("target", ""))).size())
+	return maxi(1, int(q.get("need", 1)))
+
+## How many distinct species have been discovered so far.
+func _species_discovered() -> int:
+	var n := 0
+	for fid in index.keys():
+		var entry: Dictionary = index[fid]
+		if bool(entry.get("caught", false)):
+			n += 1
+	return n
+
+func _check_quests(kind: String, fish_id: String, data: Dictionary = {}) -> void:
 	for q in quests:
 		if bool(q.get("done", false)):
 			continue
 		var qk := String(q.get("kind", ""))
-		if qk == "catch_any" and kind == "catch":
-			q["progress"] = int(q.get("progress", 0)) + 1
-		elif qk == "catch_rarity" and kind == "catch":
-			if rarity_of(fish_id) == String(q.get("target", "")):
-				q["progress"] = int(q.get("progress", 0)) + 1
-		elif qk == "region_complete" and kind == "catch":
-			var r := String(q.get("target", ""))
-			q["progress"] = int(region_percent(r) * float(FishDB.fish_by_region(r).size()))
-		elif qk == "sell_count" and kind == "sell":
-			q["progress"] = int(q.get("progress", 0)) + 1
-		elif qk == "own_boat" and kind == "boat":
-			q["progress"] = 1
-		if int(q.get("progress", 0)) >= int(q.get("target", 1)):
+		match qk:
+			"catch_any":
+				if kind == "catch":
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"catch_rarity":
+				if kind == "catch" and rarity_of(fish_id) == String(q.get("target", "")):
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"catch_night":
+				if kind == "catch" and bool(data.get("night", false)):
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"catch_weight":
+				if kind == "catch" and float(data.get("weight", 0.0)) >= float(q.get("target", 0.0)):
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"region_catch":
+				if kind == "catch" and String(data.get("region", "")) == String(q.get("target", "")):
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"region_complete":
+				if kind == "catch":
+					var r := String(q.get("target", ""))
+					q["progress"] = int(region_percent(r) * float(FishDB.fish_by_region(r).size()))
+			"unique_species":
+				if kind == "catch":
+					q["progress"] = _species_discovered()
+			"sell_count":
+				if kind == "sell":
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"sell_coins":
+				if kind == "sell":
+					q["progress"] = int(q.get("progress", 0)) + int(data.get("coins", 0))
+			"buy_bait":
+				if kind == "buy_bait":
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"use_bait":
+				if kind == "use_bait":
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"own_boat":
+				if kind == "boat":
+					q["progress"] = 1
+		if int(q.get("progress", 0)) >= quest_need(q):
 			q["done"] = true
 
 ## Procedural SFX are baked once into AudioStreamWAV clips (a streaming

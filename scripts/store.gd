@@ -33,8 +33,9 @@ func _gear(body: VBoxContainer, title: String, category: String, buy: Callable) 
 	var db: Dictionary = ShopDB.category(category)
 	for id in db.keys():
 		var d: Dictionary = db[id]
-		var owned := bool(d.get("owned", false))
-		var equipped := String(GameState.gear.get(category, "")) == String(id)
+		var is_bait := category == "baits"
+		var owned := bool(d.get("owned", false)) and not is_bait
+		var equipped := String(GameState.gear.get(GameState.gear_key(category), "")) == String(id)
 		var row := TownUI.row(body)
 		var name_l := UILib.label(row, String(d.get("name", id)), 16, UILib.CREAM, true)
 		name_l.position = Vector2(12.0, 4.0)
@@ -42,7 +43,10 @@ func _gear(body: VBoxContainer, title: String, category: String, buy: Callable) 
 		desc_l.position = Vector2(12.0, 24.0)
 		var stat_l := UILib.label(row, _stat_line(category, d), 12, GameTheme.LEAF)
 		stat_l.position = Vector2(300.0, 8.0)
-		var text := "OWNED" if owned else ("EQUIPPED" if equipped else "BUY %d" % int(d.get("cost", 0)))
+		# bait is a consumable and is always in stock; owned gear just equips
+		var text := "BUY %d" % int(d.get("cost", 0))
+		if not is_bait:
+			text = "EQUIPPED" if equipped else ("EQUIP" if owned else "BUY %d" % int(d.get("cost", 0)))
 		TownUI.row_button(row, text, buy.bind(category, String(id)))
 
 
@@ -67,7 +71,8 @@ func _stat_line(category: String, d: Dictionary) -> String:
 	match category:
 		"rods": return "SPEED: %.1fx  WINDOW: %.2f" % [float(d.get("reel_speed", 1.0)), float(d.get("timing_window", 0.2))]
 		"lines": return "KEEP: %.0f%%" % [(1.0 - float(d.get("escape_chance", 0.3))) * 100.0]
-		"baits": return "BOOSTS: %s" % [", ".join(d.get("rarity_boost", []))]
+		"baits": return "%d CASTS - BAG %d - %s" % [int(d.get("charges", 1)),
+				GameState.bait_count(String(d.get("id", ""))), ", ".join(d.get("rarity_boost", []))]
 		"buckets": return "CAPACITY: %d" % [int(d.get("capacity", 12))]
 		_: return ""
 
@@ -81,8 +86,8 @@ func _on_buy(category: String, id: String) -> void:
 
 
 func _on_buy_bait(category: String, id: String) -> void:
+	# buy_item adds the charges to the bag and equips the bait
 	if GameState.buy_item(category, id):
-		GameState.activate_bait(id)
 		GameState.play_sound("coin")
 		_reopen()
 	else:
