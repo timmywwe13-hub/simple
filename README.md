@@ -2,11 +2,19 @@
 
 A simple, polished 2D fishing game with a collection-and-progression loop, built in **Godot 4.7** (GDScript, Canvas 2D rendering, no external assets).
 
+**Play in your browser:** https://timmywwe13-hub.github.io/simple/build/web/
+
 ## How to run
 
 1. Open **Godot 4.x** and click **Import** → select this folder (`simple2/`) → choose `project.godot`.
 2. Press **Play** (or `F5`). The game boots to the main menu.
-3. Alternatively, launch headless: `godot --path . --main-pack res://main.tscn --quit-after` (testing only).
+3. Alternatively, run a quick headless check: `godot --headless --path . --quit-after 60`.
+
+To rebuild the browser version after changing scripts:
+
+```bash
+godot --headless --path . --export-release Web build/web/index.html
+```
 
 ## Controls
 
