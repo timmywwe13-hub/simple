@@ -22,7 +22,7 @@
 		main { max-width: 560px; }
 		h1 { margin: 0 0 10px; color: #f2c14e; font-size: clamp(28px, 6vw, 46px); letter-spacing: 1px; }
 		p { margin: 0 0 24px; color: #c8d6e2; line-height: 1.6; }
-		a {
+		a.play {
 			display: inline-block;
 			padding: 14px 28px;
 			border: 3px solid #f6ead8;
@@ -32,16 +32,17 @@
 			text-decoration: none;
 			letter-spacing: 1px;
 		}
-		a:hover, a:focus { background: #8fd9a8; }
+		a.play:hover, a.play:focus { background: #8fd9a8; }
 		small { display: block; margin-top: 18px; color: #7f97a8; }
+		a.readme { color: #9fb3bd; }
 	</style>
 </head>
 <body>
 	<main>
 		<h1>COTTAGE CREEK FISHING</h1>
 		<p>Loading the game&hellip; If it does not start automatically, use the button below.</p>
-		<a href="build/web/">PLAY THE GAME</a>
-		<small><a href="README.md" style="all: unset; color: #9fb3bd; text-decoration: underline; cursor: pointer;">Read the README</a></small>
+		<a class="play" href="build/web/">PLAY THE GAME</a>
+		<small><a class="readme" href="https://github.com/timmywwe13-hub/simple#readme">Read the README on GitHub</a></small>
 	</main>
 	<script>
 		window.location.replace("build/web/");
