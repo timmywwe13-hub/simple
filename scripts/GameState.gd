@@ -170,6 +170,7 @@ func craft_rod(id: String) -> String:
 ## coconuts and bait, a complete Fish Index, and every quest completed but
 ## unclaimed so the reward flow is still clickable.
 func grant_everything() -> void:
+	backup_save()
 	coins = maxi(coins, 999999)
 	unlocked_regions = ["pond", "river", "lake", "ocean"]
 	for id in ShopDB.RODS.keys():
@@ -239,8 +240,22 @@ func grant_everything() -> void:
 ## need refreshing; grant_everything() does the actual unlocking.
 const CHEAT_CODE := "2222"
 const CHEAT_WINDOW := 2.5
+## Where the pre-cheat save is parked (only written by the first cheat, so
+## real progress survives any number of cheated sessions).
+const CHEAT_BACKUP_PATH := "user://save_pre_cheat.json"
 var cheat_buffer := ""
 var cheat_timer := 0.0
+
+
+## Park a copy of the current save before the cheat overwrites it.
+func backup_save() -> void:
+	if FileAccess.file_exists(CHEAT_BACKUP_PATH) or not FileAccess.file_exists(SAVE_PATH):
+		return
+	var bytes := FileAccess.get_file_as_bytes(SAVE_PATH)
+	var f := FileAccess.open(CHEAT_BACKUP_PATH, FileAccess.WRITE)
+	if f:
+		f.store_buffer(bytes)
+		f.close()
 
 
 ## Feed one typed digit; true when the buffer has just spelled CHEAT_CODE.
