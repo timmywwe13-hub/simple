@@ -164,6 +164,106 @@ func craft_rod(id: String) -> String:
 	return ""
 
 
+## Testing cheat (typed as `2222` on the spot keys): hands over the whole
+## game so every screen can be poked at immediately - every shop item and
+## island rod owned and equipped, all regions open, the palm axe, plenty of
+## coconuts and bait, a complete Fish Index, and every quest completed but
+## unclaimed so the reward flow is still clickable.
+func grant_everything() -> void:
+	coins = maxi(coins, 999999)
+	unlocked_regions = ["pond", "river", "lake", "ocean"]
+	for id in ShopDB.RODS.keys():
+		ShopDB.RODS[id]["owned"] = true
+	for id in ShopDB.CRAFTED_RODS.keys():
+		ShopDB.CRAFTED_RODS[id]["owned"] = true
+	for id in ShopDB.LINES.keys():
+		ShopDB.LINES[id]["owned"] = true
+	for id in ShopDB.BUCKETS.keys():
+		ShopDB.BUCKETS[id]["owned"] = true
+	for id in ShopDB.LANTERNS.keys():
+		ShopDB.LANTERNS[id]["owned"] = true
+	for id in ShopDB.BOATS.keys():
+		ShopDB.BOATS[id]["owned"] = true
+	for id in ShopDB.BAITS.keys():
+		bait_counts[id] = maxi(bait_count(String(id)), 999)
+	owned_boats = ShopDB.BOATS.keys()
+	# best of everything equipped
+	gear["rod"] = "rod_ancient"
+	gear["line"] = "line_fluoro"
+	gear["bucket"] = "bucket_cooler"
+	gear["lantern"] = "lantern_storm"
+	gear["bait"] = "bait_glow"
+	gear["boat"] = "boat_trawler"
+	# Coconut Isle: palm axe, a full coconut purse and every palm regrown
+	has_axe = true
+	axe_level = 2
+	coconuts = maxi(coconuts, 999)
+	chopped_palms = {}
+	# complete Fish Index, every species recorded at its top weight
+	_init_index()
+	for fid in FishDB.all_ids():
+		var id := String(fid)
+		var f := FishDB.fish_data(id)
+		var wg: Array = f.get("weight_kg", [0.1, 1.0])
+		var entry: Dictionary = index.get(id, {})
+		entry["caught"] = true
+		entry["count"] = maxi(1, int(entry.get("count", 0)))
+		entry["pb_weight"] = maxf(float(wg[wg.size() - 1]), float(entry.get("pb_weight", 0.0)))
+		entry["region"] = String(f.get("region", "pond"))
+		index[id] = entry
+	total_caught = maxi(total_caught, index.size())
+	# a handful of top-value fish in the bucket so selling can be tested
+	var pool := FishDB.all_ids()
+	pool.sort_custom(func(a, b: String) -> bool:
+		return int(FishDB.fish_data(String(a)).get("coin", 0)) > int(FishDB.fish_data(b).get("coin", 0)))
+	for i in range(mini(6, pool.size())):
+		var fid := String(pool[i])
+		var wg: Array = FishDB.fish_data(fid).get("weight_kg", [0.1, 1.0])
+		inventory.append({"fish_id": fid, "weight": float(wg[wg.size() - 1]),
+			"region": String(FishDB.fish_data(fid).get("region", "pond")),
+			"caught_at": Time.get_ticks_msec(), "perfect": true})
+	# every quest done and waiting to be claimed (instead of auto-claimed)
+	if quests.is_empty():
+		quests = _merge_quests([])
+	for q in quests:
+		q["progress"] = quest_need(q)
+		q["done"] = true
+		q["claimed"] = false
+	if AUTO_SAVE:
+		save_game()
+
+
+## --- Testing cheat ("2222") ------------------------------------------
+## The typed buffer lives here so both the fishing scene and Town can listen
+## for the code. Scenes feed digits in and decide which of their own screens
+## need refreshing; grant_everything() does the actual unlocking.
+const CHEAT_CODE := "2222"
+const CHEAT_WINDOW := 2.5
+var cheat_buffer := ""
+var cheat_timer := 0.0
+
+
+## Feed one typed digit; true when the buffer has just spelled CHEAT_CODE.
+func cheat_digit(digit: int) -> bool:
+	cheat_buffer += str(clampi(digit, 0, 9))
+	cheat_timer = CHEAT_WINDOW
+	while cheat_buffer.length() > CHEAT_CODE.length():
+		cheat_buffer = cheat_buffer.substr(1)
+	if cheat_buffer != CHEAT_CODE:
+		return false
+	cheat_buffer = ""
+	cheat_timer = 0.0
+	return true
+
+
+func _process(dt: float) -> void:
+	if cheat_timer <= 0.0:
+		return
+	cheat_timer = maxf(0.0, cheat_timer - dt)
+	if cheat_timer == 0.0:
+		cheat_buffer = ""
+
+
 func _ready() -> void:
 	_load_game()
 	_setup_audio()

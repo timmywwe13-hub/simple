@@ -235,14 +235,57 @@ var key_edges := {}
 const TOUCH_KEY_TAPS := {KEY_R: "rod", KEY_B: "boat", KEY_I: "index", KEY_G: "axe",
 		KEY_1: "spot1", KEY_2: "spot2", KEY_3: "spot3", KEY_4: "spot4"}
 
+## Testing cheat: typing 2222 on the number-row keys unlocks the whole game
+## (see GameState.grant_everything). The digits double as the spot keys, so
+## the spot that was open when the code started is restored afterwards.
+var cheat_region := "pond"
+var cheat_fired := false
+
 
 func _key_tick() -> void:
 	key_edges = {}
-	for code in [KEY_1, KEY_2, KEY_3, KEY_4, KEY_B, KEY_R, KEY_I, KEY_G, KEY_E]:
+	cheat_fired = false
+	for code in [KEY_1, KEY_2, KEY_3, KEY_4, KEY_B, KEY_R, KEY_I, KEY_G, KEY_E,
+			KEY_0, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9]:
 		var now := Input.is_physical_key_pressed(code)
 		var was: bool = bool(key_prev.get(code, false))
 		key_prev[code] = now
 		key_edges[code] = now and not was
+	_track_cheat_code()
+
+
+## Collect typed digits into GameState's shared buffer; the code in it fires
+## the unlock. Kept to the physical keyboard so touch spot buttons never
+## trip it.
+func _track_cheat_code() -> void:
+	for code in [KEY_0, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9]:
+		if not bool(key_edges.get(code, false)):
+			continue
+		# first digit of the code: remember the spot to come back to
+		if GameState.cheat_buffer == "":
+			cheat_region = region
+		if GameState.cheat_digit(code - KEY_0):
+			_run_cheat()
+
+
+func _run_cheat() -> void:
+	GameState.grant_everything()
+	cheat_fired = true
+	# the code is typed on the spot keys - put the spot back where it was
+	if not is_island and not open_water:
+		region = cheat_region
+		_build_ambient_fish()
+		_setup_palms()
+	if state == STATE_SHOP:
+		_refresh_shop()
+	elif state == STATE_INDEX:
+		_refresh_index()
+	elif state == STATE_STATS:
+		_refresh_stats()
+	flash = 1.0
+	GameState.play_sound("rare")
+	msg("CHEAT ACCEPTED - EVERYTHING UNLOCKED")
+	print("CHEAT ACCEPTED - everything unlocked")
 
 
 func _process(dt: float) -> void:
@@ -529,6 +572,9 @@ func _update_world(dt: float) -> void:
 		_on_index(true)
 	for i in range(4):
 		if not _key_edge(KEY_1 + i):
+			continue
+		# the cheat code is typed on the spot keys - ignore its digits
+		if cheat_fired:
 			continue
 		if open_water or is_island:
 			msg("RETURN TO SHORE TO CHANGE SPOTS")
@@ -2397,6 +2443,13 @@ func _draw_menu() -> void:
 	var fw := PixFont.text_width(foot, 2)
 	PixFont.draw_text_shadowed(self, Vector2(px + (pw - fw) * 0.5, py + ph - 34.0), foot,
 			Color("#e9d8a8"), Color("#050a12", 0.6), 2, 1, 1)
+
+	# the HUD message strip only draws in-game, so the cheat confirmation
+	# gets its own line under the start-screen panel
+	if msg_text != "":
+		var mw := PixFont.text_width(msg_text, 2)
+		PixFont.draw_text_shadowed(self, Vector2(px + (pw - mw) * 0.5, py + ph + 20.0), msg_text,
+				GameTheme.GOLD, Color("#050a12", 0.75), 2, 1, 1)
 
 
 func _draw_catch_popup() -> void:

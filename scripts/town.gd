@@ -31,6 +31,9 @@ var current: Interactable = null
 var active_panel: Control
 var toast_text := ""
 var toast_timer := 0.0
+## Physical-key edges for the typed `2222` testing cheat (Town has no
+## number-key shortcuts of its own, so the digits are free here).
+var digit_prev := {}
 
 
 func _ready() -> void:
@@ -95,6 +98,7 @@ func _spawn_tunnel() -> void:
 
 
 func _process(dt: float) -> void:
+	_track_cheat_digits()
 	if toast_timer > 0.0:
 		toast_timer = maxf(0.0, toast_timer - dt)
 		if toast_timer == 0.0:
@@ -121,6 +125,23 @@ func _process(dt: float) -> void:
 
 func _touch_tap(id: String) -> bool:
 	return touch != null and touch.consume_tap(id)
+
+
+## Type 2222 in town to unlock the whole game (see GameState.grant_everything).
+## Any open shop panel is closed so it rebuilds with the new coins and stock.
+func _track_cheat_digits() -> void:
+	for code in [KEY_0, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9]:
+		var now := Input.is_physical_key_pressed(code)
+		var was: bool = bool(digit_prev.get(code, false))
+		digit_prev[code] = now
+		if not now or was:
+			continue
+		if not GameState.cheat_digit(code - KEY_0):
+			continue
+		GameState.grant_everything()
+		close_panel()
+		GameState.play_sound("rare")
+		toast("CHEAT ACCEPTED - EVERYTHING UNLOCKED")
 
 
 func open_panel(panel: Control) -> void:
