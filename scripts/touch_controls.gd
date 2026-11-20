@@ -117,6 +117,8 @@ func _build_buttons() -> void:
 				"tap", "ROD", ["world"])
 		_add_button("boat", Rect2(w - 78.0 * s, h - 212.0 * s, 74.0 * s, 46.0 * s),
 				"tap", "BOAT", ["world"])
+		_add_button("axe", Rect2(w - 238.0 * s, h - 212.0 * s, 74.0 * s, 46.0 * s),
+				"tap", "AXE", ["world"])
 		_add_button("index", Rect2(w - 158.0 * s, 58.0 * s, 74.0 * s, 46.0 * s),
 				"tap", "INDEX", ["world"])
 		_add_button("menu", Rect2(w - 78.0 * s, 58.0 * s, 74.0 * s, 46.0 * s),

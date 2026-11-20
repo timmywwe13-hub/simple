@@ -3,19 +3,21 @@ extends RefCounted
 
 ## All fish data + regional fish tables. All static.
 
-static var REGIONS := ["pond", "river", "lake", "ocean"]
+static var REGIONS := ["pond", "river", "lake", "ocean", "island"]
 static var REGION_DISPLAY := {
 	"pond": "Pond",
 	"river": "River",
 	"lake": "Lake",
 	"ocean": "Deep Sea",
 	"open": "Open Water",
+	"island": "Coconut Isle",
 }
 static var REGION_UNLOCK_COST := {
 	"pond": 0,
 	"river": 120,
 	"lake": 400,
 	"ocean": 900,
+	"island": 0,
 }
 
 static var FISH := {
@@ -398,6 +400,49 @@ static var FISH := {
 		"features": ["spikes", "fangs"],
 		"weight_kg": [8.0, 30.0], "coin": 380, "catch_rate": 0.3,
 		"desc": "Hides under the storm and hits like a wave.",
+	},
+	# --- Coconut Isle: a small tropical shore with its own fish ---
+	"palm_sardine": {
+		"id": "palm_sardine", "name": "Palm Sardine", "rarity": "Common", "region": "island",
+		"shape": "minnow", "pattern": "bands",
+		"palette": {"body": "#b8c8c8", "belly": "#f2f4e0", "fin": "#7f9eaa", "eye": "#141d27"},
+		"bait_only": true,
+		"weight_kg": [0.05, 0.2], "coin": 14, "catch_rate": 1.0,
+		"desc": "A quick little silver flash under the palms.",
+	},
+	"coconut_crabfin": {
+		"id": "coconut_crabfin", "name": "Coconut Crabfin", "rarity": "Uncommon", "region": "island",
+		"shape": "round", "pattern": "spots",
+		"palette": {"body": "#a96b3f", "belly": "#ead7af", "fin": "#73432c", "eye": "#f2d36b"},
+		"features": ["spikes"],
+		"weight_kg": [0.3, 1.2], "coin": 42, "catch_rate": 0.7,
+		"desc": "A fish with a shell like a cracked coconut.",
+	},
+	"lagoon_parrot": {
+		"id": "lagoon_parrot", "name": "Lagoon Parrotfish", "rarity": "Rare", "region": "island",
+		"shape": "round", "pattern": "scales",
+		"palette": {"body": "#3fa7a0", "belly": "#d5f0c4", "fin": "#e8848c", "eye": "#ffe08a"},
+		"bait_only": true,
+		"weight_kg": [1.0, 4.0], "coin": 150, "catch_rate": 0.45,
+		"desc": "Its bright beak crunches the island reef.",
+	},
+	"isle_electric_ray": {
+		"id": "isle_electric_ray", "name": "Isle Electric Ray", "rarity": "Epic", "region": "island",
+		"shape": "ray", "pattern": "lightning",
+		"palette": {"body": "#4a5370", "belly": "#d7e6eb", "fin": "#313b56", "eye": "#ffe45c"},
+		"features": ["glow"],
+		"bait_only": true,
+		"weight_kg": [4.0, 14.0], "coin": 330, "catch_rate": 0.25,
+		"desc": "It sleeps in the sand and wakes with a crackle.",
+	},
+	"treasure_grouper": {
+		"id": "treasure_grouper", "name": "Treasure Grouper", "rarity": "Legendary", "region": "island",
+		"shape": "round", "pattern": "checker",
+		"palette": {"body": "#c08a32", "belly": "#fff0b8", "fin": "#7c5422", "eye": "#ffe45c"},
+		"features": ["spikes", "big_eye"],
+		"bait_only": true,
+		"weight_kg": [12.0, 35.0], "coin": 720, "catch_rate": 0.1,
+		"desc": "The island's old hoard, swimming in gold.",
 	},
 }
 

@@ -29,6 +29,10 @@ godot --headless --path . --export-release Web build/web/index.html
 | Sail the boat (while aboard) | `A` / `D` (or left/right arrows) |
 | Reach Open Water | sail past the east edge of the water in the boat |
 | Return from Open Water | sail west past the edge |
+| Visit Coconut Isle | sail east from the Deep Sea shore |
+| Leave Coconut Isle | walk west off the end of the beach |
+| Take out / put away the axe (island) | `G` |
+| Chop a palm / craft (island) | `E` or click near a palm; `Escape` opens the shop |
 | Switch fishing spot | `1`–`4` |
 | Open the Fish Index | `I` (from the menu or right on the water) |
 | Pause / back | `Escape` (pauses while fishing; closes menus) |
@@ -50,6 +54,7 @@ menu, and multi-touch works.
 5. **Sell / Index** — open the Fish Index (`I`, also mid-fishing: collection log with silhouettes until caught, plus region and uncaught filters) or the Tackle Shop (sell all fish for coins).
 6. **Upgrade** — buy better rods (faster reeling, wider timing window), lines (fewer escapes), bait (attracts rarer fish), lanterns (faster night bites), and bigger buckets (more inventory).
 7. **Progress** — unlock the River, Lake, and Deep Sea regions by coins; each has its own fish table. Day/night, weather, daily catches and daily market demand change which fish are worth chasing.
+8. **Coconut Isle** — sail east from the Deep Sea to a tropical beach. Buy the axe in the shop, chop the palms for coconuts (each palm regrows in 20 minutes, with a timer over the stump), then spend the coconuts in **Coconut Isle Crafting** to build rods 25% better than every shop rod. The isle's own fish only bite with bait.
 
 ## Save system
 

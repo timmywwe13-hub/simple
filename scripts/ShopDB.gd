@@ -16,6 +16,31 @@ static var RODS := {
 		"reel_speed": 3.2, "timing_window": 0.42, "desc": "Tournament blank. Huge green zone.", "owned": false},
 }
 
+## Island-crafted rods: exactly 25% better than the shop rod they are
+## rebuilt from (Twig -> Palmwood, Willow -> Driftwood, Bamboo -> Bamboo
+## Master, Reed -> Reed Master, Carbon -> Ancient). They are built from
+## coconuts at Coconut Isle, so `owned` stays false until crafted.
+static var CRAFTED_RODS := {
+	"rod_palm": {"id": "rod_palm", "name": "Palmwood Rod", "reel_speed": 1.25,
+		"timing_window": 0.225, "base_rod": "rod_stick", "cost": 4,
+		"desc": "25% better than the Twig Rod.", "owned": false},
+	"rod_driftwood": {"id": "rod_driftwood", "name": "Driftwood Rod", "reel_speed": 1.75,
+		"timing_window": 0.275, "base_rod": "rod_wood", "cost": 6,
+		"desc": "25% better than the Willow Rod.", "owned": false},
+	"rod_bamboo_master": {"id": "rod_bamboo_master", "name": "Bamboo Master Rod", "reel_speed": 2.375,
+		"timing_window": 0.35, "base_rod": "rod_bamboo", "cost": 8,
+		"desc": "25% better than the Bamboo Rod.", "owned": false},
+	"rod_fiber_master": {"id": "rod_fiber_master", "name": "Reed Master Rod", "reel_speed": 3.125,
+		"timing_window": 0.45, "base_rod": "rod_fiber", "cost": 10,
+		"desc": "25% better than the Reed Rod.", "owned": false},
+	"rod_ancient": {"id": "rod_ancient", "name": "Ancient Rod", "reel_speed": 4.0,
+		"timing_window": 0.525, "base_rod": "rod_carbon", "cost": 14,
+		"desc": "25% better than the Carbon Rod.", "owned": false},
+}
+
+const AXE_COST := 100
+const PALM_AXE_COST := 350
+
 static var LINES := {
 	"line_nylon": {"id": "line_nylon", "name": "Nylon Line", "cost": 0,
 		"escape_chance": 0.30, "desc": "Snaps under pressure.", "owned": true},
@@ -90,16 +115,50 @@ static func category(category: String) -> Dictionary:
 	return _db(category)
 
 static func item(category: String, id: String) -> Dictionary:
-	var db: Dictionary = _db(category)
-	return db.get(id, {})
+	if category == "rods":
+		if RODS.has(id):
+			return RODS[id]
+		return CRAFTED_RODS.get(id, {})
+	return _db(category).get(id, {})
+
+static func crafted_recipe(id: String) -> Dictionary:
+	var d: Dictionary = CRAFTED_RODS.get(id, {})
+	if d.is_empty():
+		return {}
+	return {"coconuts": int(d.get("cost", 4)), "base_rod": String(d.get("base_rod", "")),
+		"name": String(d.get("name", id))}
 
 static func owned(category: String, id: String) -> bool:
-	return _db(category).get(id, {}).get("owned", false)
+	if category == "rods" and CRAFTED_RODS.has(id):
+		return bool(CRAFTED_RODS[id].get("owned", false))
+	return bool(_db(category).get(id, {}).get("owned", false))
 
 static func set_owned(category: String, id: String, value: bool) -> void:
 	var d: Dictionary = _db(category).get(id, {})
+	if d.is_empty() and category == "rods":
+		d = CRAFTED_RODS.get(id, {})
 	if d:
 		d["owned"] = value
+
+## Owned rod ids of both lists, so bought and crafted rods survive a
+## save/load (the static tables reset every launch).
+static func owned_rod_ids() -> Array:
+	var out: Array = []
+	for id in RODS.keys():
+		if bool(RODS[id].get("owned", false)):
+			out.append(String(id))
+	for id in CRAFTED_RODS.keys():
+		if bool(CRAFTED_RODS[id].get("owned", false)):
+			out.append(String(id))
+	return out
+
+static func mark_owned_rods(ids: Array) -> void:
+	for id_v in ids:
+		var id := String(id_v)
+		if RODS.has(id):
+			RODS[id]["owned"] = true
+		elif CRAFTED_RODS.has(id):
+			CRAFTED_RODS[id]["owned"] = true
 
 static func _db(category: String) -> Dictionary:
 	match category:

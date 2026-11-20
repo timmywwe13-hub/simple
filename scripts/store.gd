@@ -31,6 +31,8 @@ func interact() -> void:
 	_gear(body, "Bait", "baits", _on_buy_bait)
 	_gear(body, "Lanterns", "lanterns", _on_buy)
 	_gear(body, "Buckets", "buckets", _on_buy)
+	TownUI.header(body, "ISLAND CRAFTING")
+	_craft_rows(body)
 	TownUI.header(body, "TRAVEL PASSES")
 	_region_passes(body)
 	town.open_panel(s["root"])
@@ -65,8 +67,74 @@ func _gear(body: VBoxContainer, title: String, category: String, buy: Callable) 
 		TownUI.row_button(row, text, buy.bind(category, String(id)))
 
 
-func _region_passes(body: VBoxContainer) -> void:
-	for r in ["river", "lake", "ocean"]:
+## Coconut Isle gear: the axe and the rods built from coconuts. Same
+## crafting path as the Tackle Shop panel in the fishing scene.
+func _craft_rows(body: VBoxContainer) -> void:
+	var note_row := TownUI.row(body, 24.0)
+	var note := UILib.label(note_row, "COCONUTS: %d - CHOP PALMS ON COCONUT ISLE" % GameState.coconuts,
+			13, Color("#a8c0cc"))
+	note.position = Vector2(12.0, 2.0)
+	var axe_text := "OWNED"
+	var axe_desc := "Palm axe: 3 coconuts per tree."
+	var axe_stat := "AXE LEVEL %d" % GameState.axe_level
+	if not GameState.has_axe:
+		axe_text = "BUY %d" % ShopDB.AXE_COST
+		axe_desc = "Chop palms on Coconut Isle for coconuts."
+		axe_stat = "NO AXE"
+	elif GameState.axe_level < 2:
+		axe_text = "UPGRADE %d" % ShopDB.PALM_AXE_COST
+	_craft_row(body, "Axe", axe_desc, axe_stat, axe_text, _on_buy_axe)
+	for id in ShopDB.CRAFTED_RODS.keys():
+		var d: Dictionary = ShopDB.CRAFTED_RODS[id]
+		var rod_id := String(id)
+		var owned := ShopDB.owned("rods", rod_id)
+		var equipped := String(GameState.gear.get("rod", "")) == rod_id
+		var text := "EQUIPPED" if equipped else ("EQUIP" if owned else "CRAFT %d" % int(d.get("cost", 4)))
+		_craft_row(body, String(d.get("name", id)),
+				"%s - %d COCONUTS" % [String(d.get("desc", "")), int(d.get("cost", 4))],
+				"SPEED %.2fx  WIN %.3f" % [float(d.get("reel_speed", 1.0)),
+						float(d.get("timing_window", 0.2))],
+				text, _on_craft.bind(rod_id))
+
+
+func _craft_row(body: VBoxContainer, item_name: String, desc: String, stat: String,
+		btn_text: String, cb: Callable) -> void:
+	var row := TownUI.row(body)
+	var name_l := UILib.label(row, item_name, 16, UILib.CREAM, true)
+	name_l.position = Vector2(12.0, 4.0)
+	var desc_l := UILib.label(row, desc, 12, Color("#a8c0cc"))
+	desc_l.position = Vector2(12.0, 24.0)
+	var stat_l := UILib.label(row, stat, 12, GameTheme.LEAF)
+	stat_l.position = Vector2(360.0, 8.0)
+	TownUI.row_button(row, btn_text, cb, 140.0)
+
+
+func _on_buy_axe() -> void:
+	if GameState.buy_axe():
+		GameState.play_sound("coin")
+		town.toast("AXE READY - PRESS G ON COCONUT ISLE")
+		_reopen()
+	else:
+		GameState.play_sound("buzz")
+		town.toast("NOT ENOUGH COINS FOR THE AXE!")
+
+
+func _on_craft(id: String) -> void:
+	var err := GameState.craft_rod(id)
+	if err == "":
+		GameState.play_sound("coin")
+		town.toast("%s BUILT AND EQUIPPED" % String(ShopDB.item("rods", id).get("name", "ROD")).to_upper())
+		_reopen()
+		return
+	GameState.play_sound("buzz")
+	if err == "need_coconuts":
+		town.toast("NEED %d COCONUTS - CHOP PALMS ON COCONUT ISLE" %
+				int(ShopDB.crafted_recipe(id).get("coconuts", 0)))
+	else:
+		town.toast("CAN'T CRAFT THAT RIGHT NOW")
+
+
+func _region_passes(body: VBoxContainer) -> void:	for r in ["river", "lake", "ocean"]:
 		if GameState.unlocked_regions.has(r):
 			continue
 		var display := String(FishDB.REGION_DISPLAY.get(r, r))
@@ -82,8 +150,7 @@ func _region_passes(body: VBoxContainer) -> void:
 		TownUI.row_button(row, "BUY %d" % cost, _on_unlock.bind(r))
 
 
-func _stat_line(category: String, d: Dictionary) -> String:
-	match category:
+func _stat_line(category: String, d: Dictionary) -> String:	match category:
 		"rods": return "SPEED: %.1fx  WINDOW: %.2f" % [float(d.get("reel_speed", 1.0)), float(d.get("timing_window", 0.2))]
 		"lines": return "KEEP: %.0f%%" % [(1.0 - float(d.get("escape_chance", 0.3))) * 100.0]
 		"baits":

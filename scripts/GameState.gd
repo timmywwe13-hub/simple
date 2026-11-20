@@ -10,7 +10,7 @@ var index := {}
 var gear := {"rod": "rod_stick", "line": "line_nylon", "bait": "", "bucket": "bucket_small",
 	"boat": "boat_raft", "lantern": "lantern_none"}
 var owned_boats: Array = ["boat_raft"]
-var unlocked_regions := ["pond"]
+var unlocked_regions := ["pond", "island"]
 ## Bait is a consumable bought at the shop: bait id -> casts left in the bag.
 ## Each cast with bait equipped uses one; without bait rare fish barely bite.
 var bait_counts := {}
@@ -22,6 +22,14 @@ var stats := {
 	"biggest_fish": 0.0, "biggest_name": "", "days_fished": 0,
 }
 var muted := false
+## Coconut Isle progression: axe ownership, coconut inventory and unix
+## timestamps for felled palms. Timers keep running between sessions.
+var has_axe := false
+var axe_level := 1
+var coconuts := 0
+var chopped_palms := {}
+const PALM_REGROW_SEC := 1200
+const PALM_IDS := ["palm_0", "palm_1", "palm_2", "palm_3"]
 ## True once a session is underway (the player started fishing or travelled).
 ## Used so returning from the Town resumes the fishing scene instead of
 ## showing the start screen again. Not saved - a fresh boot shows the menu.
@@ -89,9 +97,72 @@ const QUEST_DEFS := [
 		"kind": "perfect_catch", "target": 5, "need": 5, "reward": 200},
 	{"id": "hot_streak", "title": "On Fire", "desc": "Reach a 6-catch streak.",
 		"kind": "catch_streak", "target": 6, "need": 6, "reward": 220},
+	{"id": "islander", "title": "Island Angler", "desc": "Catch 5 fish at Coconut Isle.",
+		"kind": "region_catch", "target": "island", "need": 5, "reward": 200},
 ]
 
 var quests: Array = []
+
+## Buy the island axe (AXE_COST), then upgrade it once to a palm axe
+## (PALM_AXE_COST) that knocks an extra coconut out of every palm.
+func axe_cost() -> int:
+	if not has_axe:
+		return ShopDB.AXE_COST
+	if axe_level < 2:
+		return ShopDB.PALM_AXE_COST
+	return 0
+
+func buy_axe() -> bool:
+	var cost := axe_cost()
+	if cost <= 0 or not can_afford(cost):
+		return false
+	coins -= cost
+	if not has_axe:
+		has_axe = true
+		axe_level = 1
+	else:
+		axe_level = 2
+	if AUTO_SAVE:
+		save_game()
+	return true
+
+func palm_regrow_left(id: String) -> int:
+	if not chopped_palms.has(id):
+		return 0
+	return maxi(0, int(chopped_palms.get(id, 0) - Time.get_unix_time_from_system()))
+
+## Returns coconuts earned, or -1 when the palm is still regrowing.
+func chop_palm(id: String) -> int:
+	if palm_regrow_left(id) > 0:
+		return -1
+	var yield_count := 3 if axe_level >= 2 else 2
+	coconuts += yield_count
+	chopped_palms[id] = int(Time.get_unix_time_from_system()) + PALM_REGROW_SEC
+	if AUTO_SAVE:
+		save_game()
+	return yield_count
+
+## Build a Coconut Isle rod out of coconuts. Returns "" on success and a
+## reason string when it fails, so the shops can show the right message.
+func craft_rod(id: String) -> String:
+	if not ShopDB.CRAFTED_RODS.has(id):
+		return "missing"
+	if ShopDB.owned("rods", id):
+		gear["rod"] = id
+		if AUTO_SAVE:
+			save_game()
+		return ""
+	var recipe := ShopDB.crafted_recipe(id)
+	var mat := int(recipe.get("coconuts", 0))
+	if coconuts < mat:
+		return "need_coconuts"
+	coconuts -= mat
+	ShopDB.set_owned("rods", id, true)
+	gear["rod"] = id
+	if AUTO_SAVE:
+		save_game()
+	return ""
+
 
 func _ready() -> void:
 	_load_game()
@@ -110,6 +181,11 @@ func save_game() -> void:
 		"quests": quests,
 		"stats": stats,
 		"muted": muted,
+		"has_axe": has_axe,
+		"axe_level": axe_level,
+		"coconuts": coconuts,
+		"chopped_palms": chopped_palms,
+		"owned_rods": ShopDB.owned_rod_ids(),
 	}
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file:
@@ -140,9 +216,19 @@ func _load_game() -> void:
 	if not gear.has("lantern"):
 		gear["lantern"] = "lantern_none"
 	owned_boats = data.get("owned_boats", ["boat_raft"])
-	unlocked_regions = data.get("unlocked_regions", ["pond"])
+	unlocked_regions = data.get("unlocked_regions", ["pond", "island"])
+	if not unlocked_regions.has("island"):
+		unlocked_regions.append("island")
 	total_caught = int(data.get("total_caught", 0))
 	muted = bool(data.get("muted", false))
+	has_axe = bool(data.get("has_axe", false))
+	axe_level = int(data.get("axe_level", 1))
+	coconuts = int(data.get("coconuts", 0))
+	var saved_palms: Variant = data.get("chopped_palms", {})
+	chopped_palms = saved_palms if typeof(saved_palms) == TYPE_DICTIONARY else {}
+	var saved_rods: Variant = data.get("owned_rods", [])
+	if typeof(saved_rods) == TYPE_ARRAY:
+		ShopDB.mark_owned_rods(saved_rods)
 	var saved_stats: Variant = data.get("stats", {})
 	if typeof(saved_stats) == TYPE_DICTIONARY:
 		for k in saved_stats.keys():
@@ -490,6 +576,9 @@ func gear_key(category: String) -> String:
 func buy_item(category: String, id: String) -> bool:
 	var d: Dictionary = ShopDB.item(category, id)
 	if d.is_empty():
+		return false
+	# island rods are built from coconuts at the craft bench, never bought
+	if category == "rods" and ShopDB.CRAFTED_RODS.has(id):
 		return false
 	if category == "baits":
 		var bait_cost := int(d.get("cost", 0))

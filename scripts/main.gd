@@ -123,6 +123,11 @@ var in_boat := false
 var boat_pos := Vector2.ZERO
 ## True while sailing the open-water section past the edge of a spot.
 var open_water := false
+## Coconut Isle is a separate shore with palms, island fish and crafting.
+var is_island := false
+var axe_out := false
+var palms: Array[Dictionary] = []
+const PALM_COUNT := 4
 
 ## On-screen touch controls (phones/tablets); null-safe everywhere.
 var touch_controls: TouchControls
@@ -141,6 +146,7 @@ var shop_scroll: ScrollContainer
 ## Scroll offset kept across shop rebuilds so buying near the bottom of
 ## the list no longer snaps the panel back to the top.
 var shop_scroll_pos := 0
+var shop_from_pause := false
 var stats_panel: Control
 var stats_label: Label
 var stats_mute_btn: Button
@@ -187,6 +193,8 @@ func _relayout() -> void:
 	# they used to keep their old height and drift into the sky whenever
 	# the viewport grew (browser canvas settling, window resize).
 	_build_ambient_fish()
+	if is_island:
+		_setup_palms()
 
 
 ## Tunnel to the Town scene at the left end of the bank. The fisher has no
@@ -224,13 +232,13 @@ func _build_ambient_fish() -> void:
 var key_edges := {}
 
 ## Touch button ids polled alongside the keyboard keys in _key_edge().
-const TOUCH_KEY_TAPS := {KEY_R: "rod", KEY_B: "boat", KEY_I: "index",
+const TOUCH_KEY_TAPS := {KEY_R: "rod", KEY_B: "boat", KEY_I: "index", KEY_G: "axe",
 		KEY_1: "spot1", KEY_2: "spot2", KEY_3: "spot3", KEY_4: "spot4"}
 
 
 func _key_tick() -> void:
 	key_edges = {}
-	for code in [KEY_1, KEY_2, KEY_3, KEY_4, KEY_B, KEY_R, KEY_I]:
+	for code in [KEY_1, KEY_2, KEY_3, KEY_4, KEY_B, KEY_R, KEY_I, KEY_G, KEY_E]:
 		var now := Input.is_physical_key_pressed(code)
 		var was: bool = bool(key_prev.get(code, false))
 		key_prev[code] = now
@@ -250,7 +258,10 @@ func _process(dt: float) -> void:
 		return
 
 	day_time = fposmod(day_time + dt * 0.02, 1.0)
+	var was_night := is_night
 	is_night = day_time > 0.75 or day_time < 0.25
+	if was_night != is_night:
+		_build_ambient_fish()
 	_update_weather(dt)
 
 	if shake > 0.0:
@@ -345,6 +356,8 @@ func _touch_context() -> String:
 
 
 func _touch_action_label() -> String:
+	if is_island and axe_out and state == STATE_WORLD:
+		return "CHOP"
 	match state:
 		STATE_BITE:
 			return "HOOK"
@@ -479,6 +492,8 @@ func _update_menu() -> void:
 func _update_world(dt: float) -> void:
 	if _key_edge(KEY_R):
 		rod_out = not rod_out
+		if rod_out:
+			axe_out = false
 		GameState.play_sound("ui")
 		msg("ROD READY - SPACE OR CLICK TO CAST" if rod_out else "ROD PUT AWAY - PRESS R TO TAKE IT OUT")
 	if _key_edge(KEY_B):
@@ -487,8 +502,24 @@ func _update_world(dt: float) -> void:
 		_update_boat(dt)
 	else:
 		_update_walk(dt)
+	if is_island:
+		if _key_edge(KEY_G):
+			if GameState.has_axe:
+				axe_out = not axe_out
+				rod_out = not axe_out
+				GameState.play_sound("ui")
+				msg("AXE READY - E OR CLICK CHOPS A NEARBY PALM" if axe_out else "ROD READY - SPACE TO CAST")
+			else:
+				GameState.play_sound("buzz")
+				msg("BUY AN AXE IN THE SHOP TO CHOP PALMS")
+		if _key_edge(KEY_E):
+			_chop_nearest_palm()
+	# sailing east from the Deep Sea reaches Coconut Isle
+	if not is_island and in_boat and not open_water and boat_pos.x >= view_size.x - 20.0 \
+			and region == "ocean" and Input.get_action_strength("move_right") > 0.1:
+		_enter_island()
 	# sailing off the edge of the water loads the open-water section
-	if in_boat and not open_water and boat_pos.x >= view_size.x - 20.0 \
+	if not is_island and in_boat and not open_water and boat_pos.x >= view_size.x - 20.0 \
 			and Input.get_action_strength("move_right") > 0.1:
 		_enter_open_water()
 	elif open_water and boat_pos.x <= 20.0 \
@@ -499,8 +530,8 @@ func _update_world(dt: float) -> void:
 	for i in range(4):
 		if not _key_edge(KEY_1 + i):
 			continue
-		if open_water:
-			msg("SAIL WEST BACK TO SHORE TO CHANGE SPOTS")
+		if open_water or is_island:
+			msg("RETURN TO SHORE TO CHANGE SPOTS")
 			GameState.play_sound("buzz")
 			continue
 		var target: String = ["pond", "river", "lake", "ocean"][i]
@@ -510,6 +541,7 @@ func _update_world(dt: float) -> void:
 		elif GameState.unlocked_regions.has(target):
 			region = target
 			_build_ambient_fish()
+			_setup_palms()
 			GameState.play_sound("ui")
 			msg("Moved to %s." % String(FishDB.REGION_DISPLAY.get(region, region)))
 		else:
@@ -519,7 +551,13 @@ func _update_world(dt: float) -> void:
 
 	var cast_min_x := 40.0 if open_water else bank_w + 40.0
 	cast_target = Vector2(clampf(mouse_pos.x, cast_min_x, view_size.x - 24.0), water_line)
-	if _pressed():
+	# Read the press once: the touch ACTION tap is consumed when polled, so
+	# polling it twice in a frame would eat a cast.
+	var pressed := _pressed()
+	if pressed and axe_out:
+		_chop_nearest_palm()
+		return
+	if pressed:
 		if not rod_out:
 			msg("TAKE OUT YOUR ROD FIRST - PRESS R")
 			GameState.play_sound("buzz")
@@ -530,17 +568,114 @@ func _update_world(dt: float) -> void:
 			_cast_start()
 
 
+## Coconut Isle sits off the Deep Sea coast. Sail east from the Deep Sea
+## to land there; walk west off the beach to sail home. The island keeps
+## its own fish pool, palm trees and the coconut rod crafting.
+func _enter_island() -> void:
+	region = "island"
+	is_island = true
+	open_water = false
+	in_boat = false
+	axe_out = false
+	rod_out = true
+	fisher_x = bank_w - 52.0
+	rod_tip = Vector2(fisher_x + 74.0, floor(bank_top - 78.0))
+	if tunnel:
+		tunnel.visible = false
+	_setup_palms()
+	_build_ambient_fish()
+	GameState.play_sound("rare")
+	msg("COCONUT ISLE - E CHOPS PALMS - SHOP MAKES ISLAND RODS")
+	flash = 0.8
+
+
+func _exit_island() -> void:
+	is_island = false
+	region = "ocean"
+	open_water = false
+	in_boat = true
+	axe_out = false
+	rod_out = true
+	boat_pos = Vector2(view_size.x - 110.0, _boat_surface_y())
+	if tunnel:
+		tunnel.visible = true
+	_build_ambient_fish()
+	GameState.play_sound("cast")
+	msg("BACK ON THE DEEP SEA - SAIL WEST TO THE SHORE")
+	flash = 0.8
+
+
+func _setup_palms() -> void:
+	palms.clear()
+	if not is_island:
+		return
+	var base := bank_top - 2.0
+	# Spread the palms along the walkable stretch of beach so every one
+	# can be reached even when the window is narrow.
+	var span := maxf(40.0, bank_w - 120.0)
+	var count := mini(PALM_COUNT, GameState.PALM_IDS.size())
+	for i in range(count):
+		var t := 0.0 if count <= 1 else float(i) / float(count - 1)
+		palms.append({"id": String(GameState.PALM_IDS[i]),
+			"x": 64.0 + span * t, "y": base})
+
+
+func _nearest_palm_index() -> int:
+	var best := -1
+	var dist := 100.0
+	for i in range(palms.size()):
+		var d := absf(fisher_x - float(palms[i]["x"]))
+		if d < dist:
+			dist = d
+			best = i
+	return best
+
+
+func _chop_nearest_palm() -> void:
+	if not is_island or in_boat:
+		return
+	if not GameState.has_axe:
+		msg("BUY AN AXE IN THE SHOP TO CHOP PALMS (ESC)")
+		GameState.play_sound("buzz")
+		return
+	var idx := _nearest_palm_index()
+	if idx < 0:
+		msg("WALK CLOSER TO A PALM TREE")
+		GameState.play_sound("buzz")
+		return
+	# the axe swings in hand even if the rod was out
+	axe_out = true
+	rod_out = false
+	var palm: Dictionary = palms[idx]
+	var earned := GameState.chop_palm(String(palm["id"]))
+	if earned < 0:
+		msg("PALM REGROWING - %s LEFT" % _clock_text(GameState.palm_regrow_left(String(palm["id"]))))
+		GameState.play_sound("buzz")
+		return
+	GameState.play_sound("catch")
+	msg("TIMBER! +%d COCONUTS - COCONUTS: %d" % [earned, GameState.coconuts])
+
+
+static func _clock_text(seconds: int) -> String:
+	return "%02d:%02d" % [maxi(0, seconds) / 60, maxi(0, seconds) % 60]
+
+
 ## On-foot movement along the bank, plus the tunnel to the Town scene.
 func _update_walk(dt: float) -> void:
 	var walk := Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
 	walking = absf(walk) > 0.1
 	if walking:
 		fisher_x = clampf(fisher_x + walk * fisher_speed * dt, 30.0, bank_w - 40.0)
+		# walking off the west end of Coconut Isle sails you home
+		if is_island and fisher_x <= 40.0 and walk < -0.5:
+			_exit_island()
+			return
 		walk_phase = fposmod(walk_phase + dt * 9.0, TAU)
 	else:
 		walk_phase = move_toward(walk_phase, 0.0, dt * 18.0)
 	rod_tip = Vector2(fisher_x + 74.0, floor(bank_top - 78.0))
-	if tunnel and not tunnel.triggered and tunnel.proximity_check(Vector2(fisher_x, bank_top + 1.5)):
+	if tunnel and tunnel.visible and not tunnel.triggered \
+			and tunnel.proximity_check(Vector2(fisher_x, bank_top + 1.5)):
 		tunnel.triggered = true
 		GameState.travel(tunnel.target_scene)
 
@@ -574,6 +709,10 @@ func _boat_surface_y() -> float:
 func _toggle_boat() -> void:
 	GameState.play_sound("ui")
 	if in_boat:
+		if is_island:
+			msg("WALK WEST TO THE END OF THE BEACH TO SAIL HOME")
+			GameState.play_sound("buzz")
+			return
 		if open_water:
 			msg("NO SHORE IN SIGHT - SAIL WEST TO RETURN")
 			GameState.play_sound("buzz")
@@ -587,6 +726,10 @@ func _toggle_boat() -> void:
 		rod_tip = Vector2(fisher_x + 74.0, floor(bank_top - 78.0))
 		msg("BACK ON SHORE")
 	else:
+		if is_island:
+			msg("BOARD ONLY IN THE OPEN SEA - WALK WEST TO LEAVE")
+			GameState.play_sound("buzz")
+			return
 		in_boat = true
 		boat_pos = Vector2(clampf(fisher_x + 96.0, bank_w + 52.0, view_size.x - 60.0), _boat_surface_y())
 		msg("SET SAIL - A/D TO SAIL - B NEAR SHORE TO LAND")
@@ -618,12 +761,17 @@ func _exit_open_water() -> void:
 
 
 func _cast_start() -> void:
+	var used_bait := GameState.consume_bait()
+	if region == "island" and used_bait == "":
+		msg("BAIT UP FIRST - ISLAND FISH ONLY EAT BAIT (SHOP: ESC)")
+		GameState.play_sound("buzz")
+		return
 	state = STATE_CAST
 	cast_travel = 0.0
 	bobber_home = cast_target
 	bobber_pos = rod_tip
 	# each cast uses one charge of the equipped bait (bought at the shop)
-	cast_bait = GameState.consume_bait()
+	cast_bait = used_bait
 	GameState.play_sound("cast")
 
 
@@ -979,7 +1127,16 @@ func _on_back() -> void:
 				state = STATE_WORLD
 			else:
 				show_menu()
-		STATE_SHOP: show_menu()
+		STATE_SHOP:
+			if shop_from_pause:
+				shop_from_pause = false
+				hide_all_ui()
+				if pause_panel:
+					pause_panel.visible = true
+				state = STATE_PAUSED
+				_refresh_pause()
+			else:
+				show_menu()
 		STATE_STATS: show_menu()
 		STATE_CAUGHT: _on_catch_continue()
 		_: show_menu()
@@ -993,7 +1150,8 @@ func _on_index(from_world := false) -> void:
 	_refresh_index()
 
 
-func _on_shop() -> void:
+func _on_shop(from_pause := false) -> void:
+	shop_from_pause = from_pause
 	hide_all_ui()
 	shop_panel.visible = true
 	state = STATE_SHOP
@@ -1097,12 +1255,12 @@ func _build_pause() -> void:
 	p.add_child(dim)
 	var card := Control.new()
 	card.set_anchors_preset(Control.PRESET_CENTER)
-	card.position = Vector2(-210.0, -150.0)
-	card.size = Vector2(420.0, 300.0)
+	card.position = Vector2(-210.0, -180.0)
+	card.size = Vector2(420.0, 360.0)
 	p.add_child(card)
 	var bg := ColorRect.new()
 	bg.color = GameTheme.PANEL
-	bg.size = Vector2(420.0, 300.0)
+	bg.size = Vector2(420.0, 360.0)
 	card.add_child(bg)
 	var border := ColorRect.new()
 	border.color = GameTheme.CREAM
@@ -1121,10 +1279,21 @@ func _build_pause() -> void:
 	pause_mute_btn = UILib.button(card, "SOUND: ON", _toggle_mute, 18, GameTheme.PANEL_LIGHT,
 			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
 	pause_mute_btn.position = Vector2(40.0, 148.0)
+	var shop := UILib.button(card, "SHOP & CRAFT", _open_shop_from_pause, 18, GameTheme.PANEL_LIGHT,
+			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
+	shop.position = Vector2(40.0, 204.0)
 	var menu := UILib.button(card, "MAIN MENU", _pause_to_menu, 18, GameTheme.PANEL_LIGHT,
 			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
-	menu.position = Vector2(40.0, 204.0)
+	menu.position = Vector2(40.0, 260.0)
 	p.visible = false
+
+
+## The pause menu can open the Tackle Shop, so the Coconut Isle rods and
+## the axe are reachable without sailing back to the main menu.
+func _open_shop_from_pause() -> void:
+	if pause_panel != null:
+		pause_panel.visible = false
+	_on_shop(true)
 
 
 func _open_pause() -> void:
@@ -1253,7 +1422,7 @@ func _refresh_index() -> void:
 
 
 func _cycle_index_region() -> void:
-	var options := ["", "pond", "river", "lake", "ocean", "open"]
+	var options := ["", "pond", "river", "lake", "ocean", "open", "island"]
 	var at := options.find(index_filter_region)
 	index_filter_region = String(options[(at + 1) % options.size()])
 	GameState.play_sound("ui")
@@ -1327,6 +1496,7 @@ func _refresh_shop() -> void:
 	for c in shop_content.get_children():
 		shop_content.remove_child(c)
 		c.queue_free()
+	_craft_section()
 	_shop_cat("Rods", "rods", _on_buy)
 	_shop_cat("Lines", "lines", _on_buy)
 	_shop_cat("Bait", "baits", _on_buy_bait)
@@ -1387,9 +1557,85 @@ func _shop_cat(title: String, category: String, buy_func: Callable) -> void:
 		btn.offset_bottom = 18
 
 
+## Coconut Isle crafting: the axe and the island rods. They are paid in
+## coconuts (from chopped palms), never in coins, so they feel like
+## found-and-built upgrades rather than shop stock.
+func _craft_section() -> void:
+	var t := UILib.label(shop_content, "COCONUT ISLE CRAFTING", 20, GameTheme.GOLD, true,
+			HORIZONTAL_ALIGNMENT_LEFT)
+	t.custom_minimum_size = Vector2(0.0, 28)
+	var note := UILib.label(shop_content,
+			"COCONUTS: %d - CHOP PALMS ON THE ISLE (THEY REGROW IN 20 MIN)" % GameState.coconuts,
+			13, Color("#a8c0cc"), false)
+	note.custom_minimum_size = Vector2(0.0, 20)
+	var axe_text := "OWNED"
+	var axe_desc := "Palm axe: 3 coconuts per tree."
+	var axe_stat := "AXE LEVEL %d" % GameState.axe_level
+	if not GameState.has_axe:
+		axe_text = "BUY %d" % ShopDB.AXE_COST
+		axe_desc = "Chop palms on Coconut Isle for coconuts."
+		axe_stat = "NO AXE"
+	elif GameState.axe_level < 2:
+		axe_text = "UPGRADE %d" % ShopDB.PALM_AXE_COST
+	_craft_row("Axe", axe_desc, axe_stat, axe_text, _on_buy_axe)
+	for id in ShopDB.CRAFTED_RODS.keys():
+		var d: Dictionary = ShopDB.CRAFTED_RODS[id]
+		var owned := ShopDB.owned("rods", String(id))
+		var equipped := String(GameState.gear.get("rod", "")) == String(id)
+		var btn := "EQUIPPED" if equipped else ("EQUIP" if owned else "CRAFT %d" % int(d.get("cost", 4)))
+		_craft_row(String(d.get("name", id)), String(d.get("desc", "")),
+				"%s  -  %d COCONUTS" % [_stat_line("rods", d), int(d.get("cost", 4))],
+				btn, _on_craft.bind(String(id)))
+
+
+func _craft_row(item_name: String, desc: String, stat: String, btn_text: String,
+		cb: Callable) -> void:
+	var row := Control.new()
+	row.custom_minimum_size = Vector2(600.0, 50.0)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shop_content.add_child(row)
+	var name_l := UILib.label(row, item_name, 17, GameTheme.CREAM, true)
+	name_l.position = Vector2(10, 6)
+	var desc_l := UILib.label(row, desc, 12, Color("#a8c0cc"), false)
+	desc_l.position = Vector2(10, 26)
+	var stat_l := UILib.label(row, stat, 13, GameTheme.LEAF, false)
+	stat_l.position = Vector2(330, 10)
+	var btn := UILib.button(row, btn_text, cb, 13, GameTheme.PANEL_LIGHT)
+	btn.custom_minimum_size = Vector2(140, 36)
+	btn.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+	btn.offset_left = -150
+	btn.offset_right = -10
+	btn.offset_top = -18
+	btn.offset_bottom = 18
+
+
+func _on_buy_axe() -> void:
+	if GameState.buy_axe():
+		GameState.play_sound("ui")
+		msg("AXE READY - ON COCONUT ISLE PRESS G TO HOLD IT")
+		_refresh_shop()
+	else:
+		GameState.play_sound("buzz")
+		msg("NOT ENOUGH COINS FOR THE AXE!")
+
+
+func _on_craft(id: String) -> void:
+	var err := GameState.craft_rod(id)
+	if err == "":
+		GameState.play_sound("ui")
+		msg("%s BUILT AND EQUIPPED!" % String(ShopDB.item("rods", id).get("name", "ROD")).to_upper())
+		_refresh_shop()
+		return
+	GameState.play_sound("buzz")
+	if err == "need_coconuts":
+		msg("NEED %d COCONUTS - CHOP PALMS ON COCONUT ISLE" %
+				int(ShopDB.crafted_recipe(id).get("coconuts", 0)))
+	else:
+		msg("CAN'T CRAFT THAT RIGHT NOW")
+
+
 func _is_equipped(category: String, id: String) -> bool:
 	return String(GameState.gear.get(GameState.gear_key(category), "")) == id
-
 
 func _stat_line(category: String, d: Dictionary) -> String:
 	match category:
@@ -1504,13 +1750,15 @@ func _draw() -> void:
 	_draw_mountains()
 	if open_water:
 		_draw_islands(t)
-	else:
+	elif not is_island:
 		_draw_pines()
 	_draw_water(t)
 	_draw_underwater_decor(t)
 	_draw_ambient_fish(t)
 	if not open_water:
 		_draw_bank()
+	if is_island:
+		_draw_palms(t)
 	_draw_fisher(t)
 	_draw_line_and_bobber(t)
 	_draw_weather(t)
@@ -1711,6 +1959,9 @@ func _draw_ambient_fish(t: float) -> void:
 
 func _draw_bank() -> void:
 	var nf := _night_factor()
+	if is_island:
+		_draw_island_bank(nf)
+		return
 	var dirt := GameTheme.DIRT.lerp(Color("#14161f"), nf)
 	var dirt_l := GameTheme.DIRT_LIGHT.lerp(Color("#1e2028"), nf)
 	var h := view_size.y - bank_top
@@ -1732,6 +1983,70 @@ func _draw_bank() -> void:
 				GameTheme.ROCK)
 
 
+func _draw_island_bank(nf: float) -> void:
+	# A bright tropical beach in place of the usual grass bank, with a
+	# little jetty on the right and the path home on the left.
+	var sand := GameTheme.SAND.darkened(nf * 0.5)
+	var dry := Color("#f0d9a8").darkened(nf * 0.5)
+	var wet := Color("#c9a874").darkened(nf * 0.45)
+	var h := view_size.y - bank_top
+	draw_rect(Rect2(0.0, bank_top, bank_w, h + 2.0), sand)
+	_pixel_rect(Rect2(0.0, bank_top - 10.0, bank_w, 14.0), dry)
+	_pixel_rect(Rect2(0.0, bank_top + 4.0, bank_w, 6.0), wet)
+	for i in range(24):
+		var sx := fmod(float(i) * 73.0 + 11.0, maxf(1.0, bank_w - 10.0))
+		var sy := bank_top + 18.0 + fmod(float(i) * 41.0, maxf(1.0, h - 30.0))
+		_pixel_rect(Rect2(sx, sy, 3.0, 2.0), dry)
+	# the jetty the boat ties up to
+	_pixel_rect(Rect2(bank_w - 6.0, bank_top - 2.0, 30.0, 6.0), GameTheme.WOOD)
+	_pixel_rect(Rect2(bank_w - 2.0, bank_top + 4.0, 4.0, 26.0), GameTheme.WOOD_DARK)
+	_pixel_rect(Rect2(bank_w + 14.0, bank_top + 4.0, 4.0, 26.0), GameTheme.WOOD_DARK)
+	PixFont.draw_text_shadowed(self, Vector2(8.0, bank_top - 18.0), "<- DEEP SEA",
+			GameTheme.CREAM, Color("#050a12", 0.6), 2, 1, 1)
+
+
+func _draw_palms(t: float) -> void:
+	var nf := _night_factor()
+	for palm in palms:
+		var pid := String(palm["id"])
+		var px := float(palm["x"])
+		var py := float(palm["y"])
+		var left := GameState.palm_regrow_left(pid)
+		if left > 0:
+			_pixel_rect(Rect2(px - 8.0, py - 11.0, 16.0, 9.0), GameTheme.WOOD)
+			_pixel_rect(Rect2(px - 8.0, py - 11.0, 16.0, 3.0), GameTheme.CREAM)
+			var label := _clock_text(left)
+			var w := PixFont.text_width(label, 2) + 16.0
+			_ui_panel(Rect2(px - w * 0.5, py - 58.0, w, 26.0), Color("#141c2c", 0.9), GameTheme.GOLD, 2.0)
+			PixFont.draw_text_centered(self, px, py - 54.0, label, GameTheme.GOLD, 2, 1)
+			continue
+		var trunk := Color("#8a643a").darkened(nf * 0.5)
+		_pixel_rect(Rect2(px - 4.0, py - 70.0, 9.0, 70.0), trunk)
+		_pixel_rect(Rect2(px - 1.0, py - 66.0, 3.0, 58.0), Color("#bb8b4e"))
+		for k in range(5):
+			_pixel_rect(Rect2(px - 4.0, py - 18.0 - float(k) * 12.0, 9.0, 3.0), GameTheme.WOOD_DARK)
+		var crown := Vector2(px, py - 70.0)
+		for k in range(6):
+			var angle := float(k) * TAU / 6.0
+			var tip := crown + Vector2(cos(angle) * 30.0, sin(angle) * 17.0)
+			var mid := crown.lerp(tip, 0.5) + Vector2(0.0, -8.0)
+			draw_line(mid, tip, GameTheme.PINE.darkened(nf * 0.5), 6.0)
+			draw_line(crown, mid, Color("#3f8754").darkened(nf * 0.4), 5.0)
+		for k in range(3):
+			draw_circle(crown + Vector2(-9.0 + float(k) * 8.0, 5.0), 5.0, Color("#795236"))
+		if _nearest_palm_index() >= 0 and absf(fisher_x - px) < 46.0:
+			var hint := "E: CHOP" if GameState.has_axe else "NEED AXE"
+			PixFont.draw_text_centered(self, px, py - 116.0 + sin(t * 5.0) * 2.0,
+					hint, GameTheme.CREAM, 2, 1)
+
+
+func _draw_axe(o: Vector2) -> void:
+	var hand := o + Vector2(13.0, -34.0)
+	draw_line(hand, hand + Vector2(18.0, -30.0), GameTheme.WOOD_DARK, 4.0)
+	_pixel_rect(Rect2(hand.x + 10.0, hand.y - 34.0, 15.0, 10.0), Color("#c8d4dc"))
+	_pixel_rect(Rect2(hand.x + 23.0, hand.y - 31.0, 5.0, 10.0), Color("#8a9fae"))
+
+
 func _draw_fisher(t: float) -> void:
 	var bob := sin(t * 2.0) * 1.5
 	var swing := 0.0
@@ -1744,6 +2059,9 @@ func _draw_fisher(t: float) -> void:
 		swing = 0.0
 		o = Vector2(floorf(boat_pos.x - 12.0), floorf(boat_pos.y - 2.0 + bob))
 		_draw_boat_at(t, boat_pos, false, false)
+	elif is_island:
+		# the boat is moored at the jetty while you explore the beach
+		_draw_boat_at(t, Vector2(bank_w + 30.0, _boat_surface_y()), true, false)
 	else:
 		_draw_boat_at(t, Vector2(bank_w + 44.0, _boat_surface_y()), true, false)
 	# equipped lanterns cast a warm pool of light after dark
@@ -1767,6 +2085,8 @@ func _draw_fisher(t: float) -> void:
 	_pixel_rect(Rect2(o.x + 3.0, o.y - 56.0, 3.0, 3.0), GameTheme.INK)
 	if rod_ready:
 		_draw_rod(o, true)
+	elif axe_out:
+		_draw_axe(o)
 	else:
 		_pixel_rect(Rect2(o.x + 9.0, o.y - 33.0, 6.0, 6.0), GameTheme.WOOD_DARK)
 	if in_boat:
@@ -1983,8 +2303,14 @@ func _draw_hud() -> void:
 		var daily_txt := "DAILY: %s x2" % fish_name(daily_id).to_upper()
 		PixFont.draw_text_shadowed(self, Vector2(12.0, 90.0), daily_txt,
 				GameTheme.GOLD, Color("#050a12", 0.6), 2, 1, 1)
-	PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 62.0),
-			"SPOTS 1-4 - R ROD - B BOAT - I INDEX - ESC PAUSE", Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
+	if is_island:
+		PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 96.0),
+				"G AXE - E OR CLICK CHOP - WALK WEST TO SAIL HOME",
+				Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
+	else:
+		PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 96.0),
+				"SPOTS 1-4 - R ROD - B BOAT - I INDEX - ESC PAUSE",
+				Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
 	var boat_txt := "BOAT: %s" % String(GameState.current_boat().get("name", "Old Raft")).to_upper()
 	PixFont.draw_text_shadowed(self,
 			Vector2(view_size.x - PixFont.text_width(boat_txt, 2) - 12.0, 52.0),
@@ -2012,10 +2338,14 @@ func _draw_hud() -> void:
 
 	if state == STATE_WORLD:
 		var hint := "A/D WALK - AIM WITH MOUSE - SPACE OR CLICK TO CAST - I INDEX - B BOAT"
-		if open_water:
+		if is_island:
+			hint = "G AXE - E CHOP - WALK WEST TO SAIL HOME - ESC FOR THE SHOP"
+		elif open_water:
 			hint = "OPEN WATER - A/D SAIL - SPACE OR CLICK TO CAST - SAIL WEST TO RETURN"
 		elif in_boat:
 			hint = "A/D SAIL - AIM WITH MOUSE - SPACE OR CLICK TO CAST - B TO LAND"
+			if region == "ocean":
+				hint = "SAIL EAST TO COCONUT ISLE - SPACE TO CAST - B TO LAND"
 		elif not rod_out:
 			hint = "ROD AWAY - PRESS R TO TAKE IT OUT - B TO BOARD YOUR BOAT"
 		var hw := PixFont.text_width(hint, 2)
