@@ -3,6 +3,7 @@ extends Node2D
 const PixFont := preload("res://scripts/pixel_font.gd")
 const ChangelogLib := preload("res://scripts/changelog.gd")
 const TouchControls := preload("res://scripts/touch_controls.gd")
+const RegionArt := preload("res://scripts/region_art.gd")
 
 const STATE_MENU := 0
 const STATE_WORLD := 1
@@ -15,10 +16,13 @@ const STATE_SHOP := 7
 const STATE_STATS := 8
 const STATE_PAUSED := 9
 const STATE_UPDATES := 10
+const STATE_SETTINGS := 11
 
 const WATER_RATIO := 0.60
-## Height of the start screen card (five menu buttons now).
-const MENU_PANEL_H := 440.0
+## Height of the start screen card (six menu buttons now).
+const MENU_PANEL_H := 480.0
+## How long a spot change crossfades its whole palette.
+const ART_FADE := 0.8
 
 ## Fishing minigame balance, tuned for human reaction times: a generous
 ## hook window, a slow readable sweep on the timing bar, and a forgiving
@@ -58,6 +62,53 @@ const BAIT_BOOST := 2.2
 
 var state := STATE_MENU
 var region := "pond"
+
+## --- Region art (v1.7) -----------------------------------------------
+## `art` is the *resolved* palette the drawing code uses. On a spot
+## change `art_from` freezes the old palette and it lerps into
+## `art_target` over ART_FADE seconds, so the world changes as a whole.
+var art: Dictionary = RegionArt.get_art("pond")
+var art_from: Dictionary = {}
+var art_target: Dictionary = {}
+var art_t := 1.0
+var water_wipe := 0.0
+var art_waterline := WATER_RATIO
+## Arrival banner (region name + flavour line + glyph).
+var arrival_name := ""
+var arrival_sub := ""
+var arrival_glyph := "pond"
+var arrival_t := 0.0
+## Start-menu keyboard/gamepad selection.
+var menu_sel := 0
+## Fish Index 2.0 selection.
+var index_selected := -1
+var index_shown_ids: Array[String] = []
+var index_detail: Control
+var index_detail_scroll: ScrollContainer
+var index_detail_content: Control
+var index_detail_art: Control
+var index_detail_name: Label
+var index_detail_desc: Label
+var index_detail_where: Label
+var index_detail_stats: Label
+var index_detail_region: Label
+var index_detail_rarity: Label
+var index_detail_fish: Dictionary = {}
+var index_detail_caught := false
+## Juice (v1.7).
+var splashes: Array[Dictionary] = []
+var ambient_particles: Array[Dictionary] = []
+var ambient_spawn := 1.0
+var coin_fly: Array[Dictionary] = []
+var catch_card_t := 0.0
+var saved_toast_t := 0.0
+var settings_panel: Control
+var pause_card: Control
+var settings_content: Control
+var settings_from_pause := false
+var settings_sliders := {}
+## Cached reticle target for touch taps (updated every world frame).
+var aim_reticle := Vector2.ZERO
 
 var cast_target := Vector2.ZERO
 var bobber_pos := Vector2.ZERO
@@ -134,6 +185,8 @@ var in_boat := false
 var boat_pos := Vector2.ZERO
 ## True while sailing the open-water section past the edge of a spot.
 var open_water := false
+## The spot we sailed away from, restored when we sail back west.
+var open_water_from := "pond"
 ## Coconut Isle is a separate shore with palms, island fish and crafting.
 var is_island := false
 var axe_out := false
@@ -167,10 +220,15 @@ var paused_from := STATE_WORLD
 var updates_panel: Control
 var updates_body: VBoxContainer
 var updates_from_pause := false
+var settings_fs_btn: Button
+var settings_motion_btn: Button
+var settings_touch_btn: Button
+var settings_quality_btn: Button
+var settings_reset_btn: Button
+var settings_reset_confirm := false
 
 
 func _ready() -> void:
-	GameState._load_game()
 	ui_layer = CanvasLayer.new()
 	ui_layer.name = "UI"
 	add_child(ui_layer)
@@ -179,12 +237,17 @@ func _ready() -> void:
 	touch_controls = TouchControls.new()
 	add_child(touch_controls)
 	touch_controls.setup("fishing")
+	GameState.saved.connect(_on_saved)
+	GameState.coins_gained.connect(_on_coins_gained)
+	get_tree().auto_accept_quit = false
+	_init_art()
 	_spawn_tunnel()
 	_build_index()
 	_build_shop()
 	_build_stats()
 	_build_pause()
 	_build_updates()
+	_build_settings()
 	_build_ambient_fish()
 	weather_next = _roll_weather()
 	if GameState.session_started:
@@ -193,9 +256,78 @@ func _ready() -> void:
 		show_menu()
 
 
+## Start from this region's palette (no crossfade on boot) and remember
+## the horizon ratio the rest of the layout math depends on.
+func _init_art() -> void:
+	art_target = RegionArt.get_art(region)
+	art = art_target.duplicate(true)
+	art_from = art_target.duplicate(true)
+	art_t = 1.0
+	art_waterline = float(art.get("waterline", WATER_RATIO))
+
+
+## Kick off a full-palette crossfade plus the water wipe. Everything that
+## follows - sky, water, mountains, bank, props - reads the blended art.
+func _set_region(key: String) -> void:
+	if key == region and art_t >= 1.0:
+		return
+	region = key
+	art_from = art.duplicate(true)
+	art_target = RegionArt.get_art(key)
+	art_t = 0.0
+	water_wipe = 1.0
+	arrival_name = String(art_target.get("name", key.to_upper()))
+	arrival_sub = String(art_target.get("tagline", ""))
+	arrival_glyph = String(art_target.get("glyph", "pond"))
+	arrival_t = 4.5
+	_build_ambient_fish()
+	_setup_palms()
+
+
+func _update_art(dt: float) -> void:
+	if art_t < 1.0:
+		art_t = minf(1.0, art_t + dt / ART_FADE)
+		var e := smoothstep(0.0, 1.0, art_t)
+		art = RegionArt.mix(art_from, art_target, e)
+		var ratio := float(art.get("waterline", art_waterline))
+		if absf(ratio - art_waterline) > 0.0005:
+			art_waterline = ratio
+			_relayout_water()
+	if water_wipe > 0.0:
+		water_wipe = maxf(0.0, water_wipe - dt * 1.35)
+	if arrival_t > 0.0:
+		arrival_t = maxf(0.0, arrival_t - dt)
+
+
+func _relayout_water() -> void:
+	water_line = floor(view_size.y * art_waterline)
+	bank_w = view_size.x * 0.42
+	bank_top = water_line - 10.0
+	fisher_x = clampf(fisher_x, 30.0, bank_w - 40.0)
+	rod_tip = Vector2(fisher_x + 74.0, floor(bank_top - 78.0))
+	if tunnel:
+		tunnel.position = Vector2(30.0, bank_top + 1.5)
+	_build_ambient_fish()
+	if is_island:
+		_setup_palms()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		GameState.flush_save()
+		get_tree().quit()
+	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		GameState.flush_save()
+		if state == STATE_WORLD or state == STATE_CAST or state == STATE_BITE \
+				or state == STATE_REEL:
+			_open_pause()
+
+
 func _relayout() -> void:
 	view_size = get_viewport_rect().size
-	water_line = floor(view_size.y * WATER_RATIO)
+	_layout_settings_content()
+	_layout_pause_card()
+	water_line = floor(view_size.y * art_waterline)
 	bank_w = view_size.x * 0.42
 	bank_top = water_line - 10.0
 	fisher_x = bank_w - 52.0
@@ -228,6 +360,11 @@ func _build_ambient_fish() -> void:
 	if pool.size() == 0:
 		pool = FishDB.fish_pool("pond", weather, is_night)
 	var count := 7
+	var q := GameState.quality_level()
+	if q == 0:
+		count = 4
+	elif q == 1:
+		count = 6
 	for i in range(count):
 		var data: Dictionary = pool[i % pool.size()]
 		var depth_t := float(i) / float(count)
@@ -260,7 +397,7 @@ var cheat_fired := false
 func _key_tick() -> void:
 	key_edges = {}
 	cheat_fired = false
-	for code in [KEY_1, KEY_2, KEY_3, KEY_4, KEY_B, KEY_R, KEY_I, KEY_G, KEY_E,
+	for code in [KEY_1, KEY_2, KEY_3, KEY_4, KEY_B, KEY_R, KEY_I, KEY_G, KEY_E, KEY_F11,
 			KEY_0, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9]:
 		var now := Input.is_physical_key_pressed(code)
 		var was: bool = bool(key_prev.get(code, false))
@@ -288,7 +425,7 @@ func _run_cheat() -> void:
 	cheat_fired = true
 	# the code is typed on the spot keys - put the spot back where it was
 	if not is_island and not open_water:
-		region = cheat_region
+		_set_region(cheat_region)
 		_build_ambient_fish()
 		_setup_palms()
 	if state == STATE_SHOP:
@@ -297,7 +434,7 @@ func _run_cheat() -> void:
 		_refresh_index()
 	elif state == STATE_STATS:
 		_refresh_stats()
-	flash = 1.0
+	fx_flash(1.0)
 	GameState.play_sound("rare")
 	msg("CHEAT ACCEPTED - EVERYTHING UNLOCKED")
 	print("CHEAT ACCEPTED - everything unlocked")
@@ -305,9 +442,23 @@ func _run_cheat() -> void:
 
 func _process(dt: float) -> void:
 	_key_tick()
+	_update_art(dt)
+	mouse_pos = get_viewport().get_mouse_position()
+	if _key_edge(KEY_F11):
+		GameState.toggle_fullscreen()
+	if touch_controls != null:
+		touch_controls.sync_settings()
+	GameState.set_music(_music_region(), is_night)
+	GameState.set_ambience_region(_music_region(), is_night)
+	if saved_toast_t > 0.0:
+		saved_toast_t = maxf(0.0, saved_toast_t - dt)
+	if catch_card_t < 1.0:
+		catch_card_t = minf(1.0, catch_card_t + dt * 4.2)
+	_update_splashes(dt)
+	_update_coin_fly(dt)
+	_update_ambient_particles(dt)
 
 	if state == STATE_PAUSED:
-		mouse_pos = get_viewport().get_mouse_position()
 		if Input.is_action_just_pressed("ui_cancel"):
 			_resume_game()
 		if touch_controls != null:
@@ -333,7 +484,6 @@ func _process(dt: float) -> void:
 		if msg_timer == 0.0:
 			msg_text = ""
 
-	mouse_pos = get_viewport().get_mouse_position()
 	GameState.update_bait(dt)
 	_update_dust(dt)
 
@@ -349,11 +499,7 @@ func _process(dt: float) -> void:
 		STATE_REEL:
 			_update_reel(dt)
 		STATE_INDEX:
-			pass
-		STATE_SHOP:
-			pass
-		STATE_STATS:
-			pass
+			_update_index_selection()
 		STATE_CAUGHT:
 			if _pressed():
 				_on_catch_continue()
@@ -377,11 +523,151 @@ func _process(dt: float) -> void:
 	queue_redraw()
 
 
+func _music_region() -> String:
+	if is_island:
+		return "island"
+	if open_water:
+		return "open"
+	return region
+
+
+func _on_saved() -> void:
+	saved_toast_t = 1.8
+
+
+## Gold coins flying from the sale to the HUD coin counter.
+func _on_coins_gained(amount: int) -> void:
+	if amount <= 0:
+		return
+	var n := clampi(3 + int(log(float(amount) + 1.0)), 3, 9)
+	for i in range(n):
+		var start := view_size * 0.5 + Vector2(randf_range(-70.0, 70.0), randf_range(10.0, 80.0))
+		coin_fly.append({
+			"from": start,
+			"pos": start,
+			"t": 0.0,
+			"delay": float(i) * 0.05,
+			"sweep": randf_range(-120.0, 120.0),
+		})
+
+
+func _update_coin_fly(dt: float) -> void:
+	var target := Vector2(view_size.x - 34.0, 28.0)
+	for i in range(coin_fly.size() - 1, -1, -1):
+		var c: Dictionary = coin_fly[i]
+		if float(c["delay"]) > 0.0:
+			c["delay"] = float(c["delay"]) - dt
+			continue
+		c["t"] = minf(1.0, float(c["t"]) + dt * 1.8)
+		var t: float = float(c["t"])
+		var p: Vector2 = (c["from"] as Vector2).lerp(target, t)
+		p.y -= sin(t * PI) * 90.0
+		p.x += float(c["sweep"]) * sin(t * PI)
+		c["pos"] = p
+		if t >= 1.0:
+			coin_fly.remove_at(i)
+
+
+## Splash rings + droplets at the bobber (cast landing, hook, catch).
+func _spawn_splash(pos: Vector2, strength := 1.0) -> void:
+	if GameState.reduce_motion() and strength < 0.7:
+		return
+	splashes.append({"pos": pos, "life": 0.0, "max": 0.9, "strength": strength})
+	if splashes.size() > 12:
+		splashes.remove_at(0)
+
+
+func _update_splashes(dt: float) -> void:
+	for i in range(splashes.size() - 1, -1, -1):
+		var s: Dictionary = splashes[i]
+		s["life"] = float(s["life"]) + dt
+		if float(s["life"]) >= float(s["max"]):
+			splashes.remove_at(i)
+
+
+## Region-appropriate ambient particles: fireflies / lily bugs / gulls /
+## spray / mist. Capped hard and disabled at the low quality tier.
+func _update_ambient_particles(dt: float) -> void:
+	for i in range(ambient_particles.size() - 1, -1, -1):
+		var p: Dictionary = ambient_particles[i]
+		p["life"] = float(p["life"]) - dt
+		p["pos"] = (p["pos"] as Vector2) + (p["vel"] as Vector2) * dt
+		if float(p["life"]) <= 0.0:
+			ambient_particles.remove_at(i)
+	if state == STATE_MENU or state == STATE_INDEX or state == STATE_SETTINGS \
+			or state == STATE_STATS or state == STATE_UPDATES or state == STATE_SHOP:
+		return
+	var q := GameState.quality_level()
+	if q == 0:
+		return
+	ambient_spawn -= dt
+	if ambient_spawn > 0.0:
+		return
+	ambient_spawn = randf_range(0.35, 1.1) if q >= 2 else randf_range(0.8, 2.0)
+	var kinds: Array = art.get("ambient", [])
+	if kinds.is_empty():
+		return
+	var kind := String(kinds[randi() % kinds.size()])
+	if kind == "spray" and q < 2:
+		return
+	if kind == "firefly" and not is_night:
+		kind = "dragonfly"
+	if kind == "mist" and not bool(art.get("mist", false)):
+		kind = "firefly" if is_night else "dragonfly"
+	if kind == "spray" and not bool(art.get("spray", false)):
+		kind = "dragonfly"
+	_spawn_particle(kind)
+	if ambient_particles.size() > (14 if q >= 2 else 7):
+		ambient_particles.remove_at(0)
+
+
+func _spawn_particle(kind: String) -> void:
+	var pos := Vector2.ZERO
+	var vel := Vector2.ZERO
+	var life := 3.0
+	match kind:
+		"firefly":
+			pos = Vector2(randf_range(0.0, view_size.x), randf_range(water_line * 0.55, water_line - 10.0))
+			vel = Vector2(randf_range(-12.0, 12.0), randf_range(-9.0, 9.0))
+			life = randf_range(3.0, 6.0)
+		"dragonfly":
+			pos = Vector2(randf_range(0.0, view_size.x), randf_range(water_line * 0.5, water_line - 8.0))
+			vel = Vector2(randf_range(20.0, 46.0), randf_range(-8.0, 8.0))
+			life = randf_range(2.5, 4.5)
+		"gull":
+			var from_left := randf() > 0.5
+			pos = Vector2(-20.0 if from_left else view_size.x + 20.0,
+					randf_range(40.0, water_line * 0.7))
+			vel = Vector2(randf_range(30.0, 55.0) * (1.0 if from_left else -1.0),
+					randf_range(-6.0, 6.0))
+			life = 9.0
+		"mist":
+			pos = Vector2(randf_range(0.0, view_size.x), water_line - randf_range(2.0, 18.0))
+			vel = Vector2(randf_range(4.0, 12.0), randf_range(-2.0, 2.0))
+			life = randf_range(4.0, 7.0)
+		"spray":
+			pos = Vector2(randf_range(bank_w + 20.0, view_size.x - 20.0), water_line + randf_range(4.0, 30.0))
+			vel = Vector2(randf_range(-8.0, 8.0), randf_range(-22.0, -6.0))
+			life = randf_range(0.5, 1.1)
+		_:
+			return
+	ambient_particles.append({"kind": kind, "pos": pos, "vel": vel, "life": life,
+			"max": life, "seed": randf_range(0.0, TAU)})
+
+
 func _key_edge(code: int) -> bool:
 	if touch_controls != null and TOUCH_KEY_TAPS.has(code) \
 			and touch_controls.consume_tap(String(TOUCH_KEY_TAPS[code])):
 		return true
 	return bool(key_edges.get(code, false))
+
+
+## Left/right axis from keyboard *and* the analog thumb-stick.
+func _move_x() -> float:
+	var v := Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
+	if touch_controls != null:
+		v = clampf(v + touch_controls.stick.x, -1.0, 1.0)
+	return v
 
 
 func _pressed() -> bool:
@@ -408,7 +694,7 @@ func _touch_context() -> String:
 			return "fishing"
 		STATE_REEL:
 			return "reel"
-		STATE_PAUSED, STATE_UPDATES:
+		STATE_PAUSED, STATE_UPDATES, STATE_SETTINGS:
 			return "hidden"
 		_:
 			return "hidden"
@@ -472,7 +758,8 @@ func _update_weather(dt: float) -> void:
 		lightning_timer -= dt
 		if lightning_timer <= 0.0:
 			lightning_timer = randf_range(5.0, 12.0)
-			lightning_flash = 1.0
+			if not GameState.reduce_motion():
+				lightning_flash = 1.0
 			lightning_x = randf_range(view_size.x * 0.15, view_size.x * 0.85)
 			GameState.play_sound("thunder")
 	if lightning_flash > 0.0:
@@ -528,25 +815,49 @@ func _draw_weather(t: float) -> void:
 
 func _update_menu() -> void:
 	menu_buttons = _menu_button_rects()
+	var up := Input.is_action_just_pressed("move_up") or Input.is_action_just_pressed("ui_up")
+	var down := Input.is_action_just_pressed("move_down") or Input.is_action_just_pressed("ui_down")
+	if up or down:
+		menu_sel = (menu_sel + (-1 if up else 1) + menu_buttons.size()) % menu_buttons.size()
+		GameState.play_sound("ui")
 	hover_button = -1
 	for i in range(menu_buttons.size()):
 		var b := menu_buttons[i]["rect"] as Rect2
 		if b.has_point(mouse_pos):
 			hover_button = i
+			menu_sel = i
+	if hover_button < 0:
+		hover_button = clampi(menu_sel, 0, menu_buttons.size() - 1)
 	if not _pressed():
 		return
-	if hover_button >= 0:
-		GameState.play_sound("ui")
-		match String(menu_buttons[hover_button]["id"]):
-			"start": _on_start()
-			"index": _on_index()
-			"shop": _on_shop()
-			"stats": _on_stats()
-			"updates": _on_updates()
-	elif Input.is_action_just_pressed("ui_accept"):
-		# SPACE / Enter starts the game even without hovering a button
-		GameState.play_sound("ui")
-		_on_start()
+	var pick := menu_sel
+	if _clicked_on_menu():
+		pick = _menu_button_at(mouse_pos)
+		if pick < 0:
+			return
+	elif not Input.is_action_just_pressed("ui_accept"):
+		return
+	if pick < 0 or pick >= menu_buttons.size():
+		return
+	GameState.play_sound("ui")
+	match String(menu_buttons[pick]["id"]):
+		"start": _on_start()
+		"index": _on_index()
+		"shop": _on_shop()
+		"stats": _on_stats()
+		"settings": _on_settings()
+		"updates": _on_updates()
+
+
+func _clicked_on_menu() -> bool:
+	return Input.is_action_just_pressed("click") and not _click_blocked()
+
+
+func _menu_button_at(pos: Vector2) -> int:
+	for i in range(menu_buttons.size()):
+		if (menu_buttons[i]["rect"] as Rect2).has_point(pos):
+			return i
+	return -1
 
 
 func _update_world(dt: float) -> void:
@@ -590,6 +901,14 @@ func _update_world(dt: float) -> void:
 		# opening the index ends this frame's world update, so a click made
 		# with the same press can never start a cast behind the panel
 		return
+	# gamepad shoulder buttons cycle spots (touch/keyboard still use 1-4)
+	var spot_delta := 0
+	if Input.is_action_just_pressed("spot_next"):
+		spot_delta = 1
+	elif Input.is_action_just_pressed("spot_prev"):
+		spot_delta = -1
+	if spot_delta != 0 and not open_water and not is_island:
+		_cycle_spot(spot_delta)
 	for i in range(4):
 		if not _key_edge(KEY_1 + i):
 			continue
@@ -605,11 +924,9 @@ func _update_world(dt: float) -> void:
 			msg("THE DEEP SEA NEEDS A REAL BOAT - VISIT THE BOAT DEALER")
 			GameState.play_sound("buzz")
 		elif GameState.unlocked_regions.has(target):
-			region = target
-			_build_ambient_fish()
-			_setup_palms()
+			_set_region(target)
 			GameState.play_sound("ui")
-			msg("Moved to %s." % String(FishDB.REGION_DISPLAY.get(region, region)))
+			msg("%s - %s" % [RegionArt.display(region), RegionArt.tagline(region)])
 		else:
 			msg("Locked: %s costs %d coins." % [FishDB.REGION_DISPLAY.get(target, target),
 					int(FishDB.REGION_UNLOCK_COST.get(target, 0))])
@@ -634,11 +951,30 @@ func _update_world(dt: float) -> void:
 			_cast_start()
 
 
+## Gamepad / keyboard spot cycling. Skips locked regions and warns instead
+## of teleporting into a spot the player has not bought yet.
+func _cycle_spot(delta: int) -> void:
+	var order := ["pond", "river", "lake", "ocean"]
+	var at := order.find(region)
+	for step in range(1, order.size() + 1):
+		var key: String = order[(at + step * delta + order.size() * 4) % order.size()]
+		if not GameState.unlocked_regions.has(key):
+			continue
+		if key == "ocean" and not GameState.has_seaworthy_boat():
+			continue
+		_set_region(key)
+		GameState.play_sound("ui")
+		msg("%s - %s" % [RegionArt.display(region), RegionArt.tagline(region)])
+		return
+	msg("NO OTHER SPOTS UNLOCKED YET - VISIT THE SHOP")
+	GameState.play_sound("buzz")
+
+
 ## Coconut Isle sits off the Deep Sea coast. Sail east from the Deep Sea
 ## to land there; walk west off the beach to sail home. The island keeps
 ## its own fish pool, palm trees and the coconut rod crafting.
 func _enter_island() -> void:
-	region = "island"
+	_set_region("island")
 	is_island = true
 	open_water = false
 	in_boat = false
@@ -652,12 +988,12 @@ func _enter_island() -> void:
 	_build_ambient_fish()
 	GameState.play_sound("rare")
 	msg("COCONUT ISLE - E CHOPS PALMS - SHOP MAKES ISLAND RODS")
-	flash = 0.8
+	fx_flash(0.8)
 
 
 func _exit_island() -> void:
 	is_island = false
-	region = "ocean"
+	_set_region("ocean")
 	open_water = false
 	in_boat = true
 	axe_out = false
@@ -668,7 +1004,7 @@ func _exit_island() -> void:
 	_build_ambient_fish()
 	GameState.play_sound("cast")
 	msg("BACK ON THE DEEP SEA - SAIL WEST TO THE SHORE")
-	flash = 0.8
+	fx_flash(0.8)
 
 
 func _setup_palms() -> void:
@@ -731,8 +1067,7 @@ static func _clock_text(seconds: int) -> String:
 ## reads as a walk rather than a teleport. The step counter kicks up a tiny
 ## dust puff on each footfall.
 func _update_walk(dt: float) -> void:
-	var walk := clampf(Input.get_action_strength("move_right")
-			- Input.get_action_strength("move_left"), -1.0, 1.0)
+	var walk := clampf(_move_x(), -1.0, 1.0)
 	var target := walk * fisher_speed
 	var rate := 1050.0 if absf(walk) > 0.05 else 1400.0
 	walk_vel = move_toward(walk_vel, target, rate * dt)
@@ -774,6 +1109,8 @@ func _update_walk(dt: float) -> void:
 ## Small dust puff under the foot that just landed. Stored in world space
 ## so it stays behind as the fisher walks on.
 func _spawn_dust(pos: Vector2) -> void:
+	if GameState.reduce_motion():
+		return
 	dust.append({
 		"pos": pos + Vector2(randf_range(-3.0, 3.0), -1.0),
 		"vel": Vector2(-signf(walk_vel) * randf_range(6.0, 15.0), randf_range(-13.0, -5.0)),
@@ -802,7 +1139,7 @@ func _update_dust(dt: float) -> void:
 ## water. Speed comes from the boat's ShopDB stat, so better boats move
 ## faster.
 func _update_boat(dt: float) -> void:
-	var dir := Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
+	var dir := _move_x()
 	walking = absf(dir) > 0.1
 	boat_pos.y = _boat_surface_y()
 	if walking:
@@ -855,25 +1192,28 @@ func _toggle_boat() -> void:
 ## section: a wide body of open sea with its own fish for the index.
 func _enter_open_water() -> void:
 	open_water = true
+	open_water_from = region
+	_set_region("open")
 	boat_pos = Vector2(90.0, _boat_surface_y())
 	if tunnel:
 		tunnel.visible = false
 	_build_ambient_fish()
 	GameState.play_sound("cast")
 	msg("OPEN WATER - UNCHARTED FISH LURK BELOW")
-	flash = 0.8
+	fx_flash(0.8)
 
 
 ## Sail back west to return to the regular fishing spot.
 func _exit_open_water() -> void:
 	open_water = false
+	_set_region(open_water_from)
 	boat_pos = Vector2(view_size.x - 110.0, boat_pos.y)
 	if tunnel:
 		tunnel.visible = true
 	_build_ambient_fish()
 	GameState.play_sound("cast")
 	msg("BACK AT THE %s" % String(FishDB.REGION_DISPLAY.get(region, region)).to_upper())
-	flash = 0.8
+	fx_flash(0.8)
 
 
 func _cast_start() -> void:
@@ -892,6 +1232,7 @@ func _cast_start() -> void:
 	bobber_pos = rod_tip
 	# each cast uses one charge of the equipped bait (bought at the shop)
 	cast_bait = used_bait
+	_spawn_splash(cast_target, 0.7)
 	GameState.play_sound("cast")
 
 
@@ -902,6 +1243,7 @@ func _update_cast(dt: float) -> void:
 	bobber_pos.y -= sin(t * PI) * 110.0
 	if cast_travel >= 1.0:
 		state = STATE_BITE
+		_spawn_splash(bobber_home, 1.0)
 		bite_timer = 0.0
 		bite_delay = randf_range(1.8, 6.5)
 		if is_night:
@@ -938,8 +1280,15 @@ func _trigger_bite() -> void:
 	msg("BITE! PRESS SPACE OR CLICK TO HOOK")
 
 
+## Timing minigame target. Higher-tier rods reel faster but the green is
+## smaller *and* relocates every time the marker bounces, so holding or
+## autoclicking a fixed spot cannot land fish any more.
+var timing_center := 0.5
+var timing_shifts := 0
+
 func _hook_success() -> void:
 	hooked = false
+	_spawn_splash(bobber_home, 0.8)
 	_select_catch()
 	state = STATE_REEL
 	reel_active = true
@@ -949,6 +1298,8 @@ func _hook_success() -> void:
 	reel_tension = 0.5
 	tug_ok_time = 0.0
 	tug_peg_time = 0.0
+	timing_shifts = 0
+	timing_center = _first_timing_center()
 	if _is_big_fish():
 		msg("HEAVY FIGHT - HOLD TO REEL, KEEP THE MARKER IN THE GREEN")
 	else:
@@ -961,7 +1312,7 @@ func _hook_fail() -> void:
 	GameState.reset_streak()
 	GameState.play_sound("escape")
 	msg("THE FISH GOT AWAY...")
-	shake = 0.6
+	fx_shake(0.6)
 
 
 func _is_big_fish() -> bool:
@@ -1038,15 +1389,17 @@ func _update_reel(dt: float) -> void:
 
 
 func _update_timing(dt: float) -> void:
-	var window := _timing_window()
 	var prev_pos := reel_pos
-	reel_pos += reel_dir * dt * (TIMING_SWEEP / maxf(window, 0.1))
+	# better rods sweep faster; that speed is the upgrade's trade-off
+	reel_pos += reel_dir * dt * TIMING_SWEEP * _rod_reel_speed()
 	if reel_pos > 1.0:
 		reel_pos = 1.0
 		reel_dir = -1.0
+		_shift_timing_center()
 	elif reel_pos < 0.0:
 		reel_pos = 0.0
 		reel_dir = 1.0
+		_shift_timing_center()
 	if _pressed():
 		_finish_timing(prev_pos)
 
@@ -1055,24 +1408,79 @@ func _update_timing(dt: float) -> void:
 ## the previous frame, plus TIMING_GRACE - a press that arrives a frame
 ## late still counts if the marker was in the green a moment ago.
 func _finish_timing(prev_pos: float = -1.0) -> void:
-	var window := _timing_window()
-	var good: float = window * TIMING_ACCEPT
-	var lo := 0.5 - good - TIMING_GRACE
-	var hi := 0.5 + good + TIMING_GRACE
+	var good := _green_half()
+	var lo := timing_center - good - TIMING_GRACE
+	var hi := timing_center + good + TIMING_GRACE
 	var ok := reel_pos >= lo and reel_pos <= hi
 	if not ok and prev_pos >= 0.0:
 		var swept_lo := minf(prev_pos, reel_pos) - TIMING_GRACE
 		var swept_hi := maxf(prev_pos, reel_pos) + TIMING_GRACE
 		ok = swept_hi >= lo and swept_lo <= hi
-	var perfect := ok and absf(reel_pos - 0.5) < good * 0.35
+	var perfect := ok and absf(reel_pos - timing_center) < good * 0.35
 	_complete_catch(ok, perfect)
 
 
-## Timing window of the equipped rod. Rarer fish fight a little harder:
-## Rare / Epic / Legendary catches shrink the green zone slightly.
-func _timing_window() -> float:
+## Which rod this is: 0 = Twig, 4 = Carbon/Ancient. Crafted island rods
+## rank with the shop rod they are built from.
+func _rod_tier_rank() -> int:
 	var base := float(ShopDB.item("rods", String(GameState.gear.get("rod", "rod_stick"))).get("timing_window", 0.18))
-	return base * _fight_scale()
+	if base >= 0.40:
+		return 4
+	if base >= 0.34:
+		return 3
+	if base >= 0.26:
+		return 2
+	if base >= 0.20:
+		return 1
+	return 0
+
+
+func _rod_reel_speed() -> float:
+	return maxf(0.6, float(ShopDB.item("rods", String(GameState.gear.get("rod", "rod_stick"))).get("reel_speed", 1.0)))
+
+
+## Half-width of the green target. High-tier rods get a *smaller* target
+## (the upgrade is speed, not an easier click), shrinking to 38% of the
+## Twig Rod's window. Rarer fish tighten it a little further.
+func _green_half() -> float:
+	var tier_t := float(_rod_tier_rank()) / 4.0
+	return TIMING_ACCEPT * 0.18 * lerpf(1.0, 0.38, tier_t) * _fight_scale()
+
+
+## Low-tier rods always keep the target in the middle (easy to learn).
+## Bamboo and above start somewhere random and move on every bounce.
+func _first_timing_center() -> float:
+	if _rod_tier_rank() < 2:
+		return 0.5
+	return _random_timing_center(0.5)
+
+
+func _shift_timing_center() -> void:
+	if _rod_tier_rank() < 2:
+		return
+	timing_center = _random_timing_center(timing_center)
+	timing_shifts += 1
+
+
+func _random_timing_center(previous: float) -> float:
+	var half := _green_half()
+	var lo := 0.10 + half
+	var hi := 0.90 - half
+	if hi <= lo:
+		return 0.5
+	var best := previous
+	# at least ~0.14 away from the last spot, so a held click misses
+	for i in range(8):
+		best = randf_range(lo, hi)
+		if absf(best - previous) >= 0.14:
+			break
+	return best
+
+
+## Kept for the shop stat line: the old "window" number is now the
+## precision rating (smaller = tighter target).
+func _timing_window() -> float:
+	return _green_half()
 
 
 ## 1.0 for common fish, a touch tighter for the rare ones.
@@ -1149,11 +1557,13 @@ func _complete_catch(success: bool, perfect := false) -> void:
 		catch_perfect = perfect
 		catch_coins = GameState.sale_value(catch_fish_id, catch_weight, 1.0, perfect)
 		state = STATE_CAUGHT
+		catch_card_t = 0.0
+		_spawn_splash(bobber_home, 1.0)
 		if perfect:
-			flash = maxf(flash, 0.45)
+			fx_flash(0.45)
 		if catch_new and GameTheme.get_rarity_rate(catch_rarity) < 0.1:
-			flash = 1.0
-			shake = 0.8
+			fx_flash(1.0)
+			fx_shake(0.8)
 			GameState.play_sound("rare")
 		else:
 			GameState.play_sound("catch")
@@ -1163,7 +1573,7 @@ func _complete_catch(success: bool, perfect := false) -> void:
 		GameState.reset_streak()
 		GameState.play_sound("escape")
 		msg("THE FISH GOT AWAY... STREAK LOST" if had_streak > 0 else "THE FISH GOT AWAY...")
-		shake = 0.6
+		fx_shake(0.6)
 
 
 ## The Volt Serpent's bad side: it bites the hand that reels it in, costs
@@ -1178,11 +1588,12 @@ func _monster_shock(f: Dictionary) -> void:
 	catch_fish_id = ""
 	bobber_pos = rod_tip
 	GameState.play_sound("shock")
-	shake = 1.0
-	flash = 0.6
-	hurt_flash = 1.0
+	fx_shake(1.0)
+	fx_flash(0.6)
+	fx_hurt(1.0)
 	# a bolt snaps out of the water where the serpent broke free
-	lightning_flash = 1.0
+	if not GameState.reduce_motion():
+		lightning_flash = 1.0
 	lightning_x = clampf(bobber_pos.x, 40.0, view_size.x - 40.0)
 	msg("%s SHOCKS YOU! -%d COINS - IT GOT AWAY" % [
 			String(f.get("name", "MONSTER")).to_upper(), lost])
@@ -1208,6 +1619,27 @@ func msg(text: String) -> void:
 	msg_timer = 4.0
 
 
+## Reduce-motion aware effects. With the setting on, shakes and flashes
+## are dropped entirely (the sound still plays) so the screen never
+## strobes or jolts.
+func fx_shake(amount: float) -> void:
+	if GameState.reduce_motion():
+		return
+	shake = maxf(shake, amount)
+
+
+func fx_flash(amount: float) -> void:
+	if GameState.reduce_motion():
+		return
+	flash = maxf(flash, amount)
+
+
+func fx_hurt(amount: float) -> void:
+	if GameState.reduce_motion():
+		return
+	hurt_flash = maxf(hurt_flash, amount)
+
+
 func show_menu() -> void:
 	hide_all_ui()
 	menu_panel_show()
@@ -1224,6 +1656,8 @@ func hide_all_ui() -> void:
 		pause_panel.visible = false
 	if updates_panel:
 		updates_panel.visible = false
+	if settings_panel:
+		settings_panel.visible = false
 
 
 func menu_panel_show() -> void:
@@ -1240,6 +1674,9 @@ func _on_start() -> void:
 
 
 func _on_back() -> void:
+	if state == STATE_SETTINGS:
+		settings_reset_confirm = false
+		_refresh_settings()
 	match state:
 		STATE_INDEX:
 			# opened mid-fishing with I / the INDEX button -> go back to the
@@ -1260,6 +1697,16 @@ func _on_back() -> void:
 			else:
 				show_menu()
 		STATE_STATS: show_menu()
+		STATE_SETTINGS:
+			if settings_from_pause:
+				settings_from_pause = false
+				hide_all_ui()
+				if pause_panel:
+					pause_panel.visible = true
+				state = STATE_PAUSED
+				_refresh_pause()
+			else:
+				show_menu()
 		STATE_UPDATES:
 			if updates_from_pause:
 				updates_from_pause = false
@@ -1297,6 +1744,18 @@ func _on_stats() -> void:
 	_refresh_stats()
 
 
+## Settings is reachable from both the start menu and the pause menu.
+func _on_settings(from_pause := false) -> void:
+	GameState.play_sound("ui")
+	settings_from_pause = from_pause
+	hide_all_ui()
+	_refresh_settings()
+	settings_panel.visible = true
+	state = STATE_SETTINGS
+	if touch_controls != null:
+		touch_controls.set_context("hidden")
+
+
 ## The What's New screen is reachable from the main menu and the pause menu
 ## (and U in Town). Opening it marks this version as read.
 func _on_updates(from_pause := false) -> void:
@@ -1329,12 +1788,17 @@ func _build_stats() -> void:
 	title.position = Vector2(28, 18)
 	var sub := UILib.label(p, "EVERYTHING YOU HAVE LANDED SO FAR", 15, Color("#a8c0cc"))
 	sub.position = Vector2(28, 54)
-	stats_label = UILib.label(p, "", 20, GameTheme.CREAM, false, HORIZONTAL_ALIGNMENT_LEFT)
-	stats_label.set_anchors_preset(Control.PRESET_FULL_RECT)
-	stats_label.offset_left = 48
-	stats_label.offset_top = 96
-	stats_label.offset_right = -48
-	stats_label.offset_bottom = -100
+	# 12 lines do not fit the stats area on a 360px-tall window, so scroll.
+	var stats_scroll := ScrollContainer.new()
+	stats_scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	stats_scroll.offset_left = 48
+	stats_scroll.offset_top = 96
+	stats_scroll.offset_right = -48
+	stats_scroll.offset_bottom = -100
+	stats_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	p.add_child(stats_scroll)
+	stats_label = UILib.label(stats_scroll, "", 20, GameTheme.CREAM, false, HORIZONTAL_ALIGNMENT_LEFT)
+	stats_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	stats_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	var b := UILib.button(p, "BACK", _on_back, 20, GameTheme.PANEL_LIGHT)
 	b.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
@@ -1400,13 +1864,12 @@ func _build_pause() -> void:
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	p.add_child(dim)
 	var card := Control.new()
-	card.set_anchors_preset(Control.PRESET_CENTER)
-	card.position = Vector2(-210.0, -188.0)
-	card.size = Vector2(420.0, 376.0)
+	card.size = Vector2(420.0, 420.0)
 	p.add_child(card)
+	pause_card = card
 	var bg := ColorRect.new()
 	bg.color = GameTheme.PANEL
-	bg.size = Vector2(420.0, 376.0)
+	bg.size = Vector2(420.0, 420.0)
 	card.add_child(bg)
 	var border := ColorRect.new()
 	border.color = GameTheme.CREAM
@@ -1431,10 +1894,25 @@ func _build_pause() -> void:
 	var updates := UILib.button(card, "WHAT'S NEW", _on_updates.bind(true), 18, GameTheme.PANEL_LIGHT,
 			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
 	updates.position = Vector2(40.0, 228.0)
+	var settings := UILib.button(card, "SETTINGS", _on_settings.bind(true), 18, GameTheme.PANEL_LIGHT,
+			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
+	settings.position = Vector2(40.0, 276.0)
 	var menu := UILib.button(card, "MAIN MENU", _pause_to_menu, 18, GameTheme.PANEL_LIGHT,
 			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
-	menu.position = Vector2(40.0, 276.0)
+	menu.position = Vector2(40.0, 324.0)
 	p.visible = false
+	_layout_pause_card()
+
+
+## The pause card is a fixed 420x420 sheet; shrink it on short windows so
+## the title and MAIN MENU do not leave the screen on a landscape phone.
+func _layout_pause_card() -> void:
+	if pause_card == null:
+		return
+	var sc := clampf(minf((view_size.x - 16.0) / 420.0,
+			(view_size.y - 16.0) / 420.0), 0.4, 1.0)
+	pause_card.scale = Vector2(sc, sc)
+	pause_card.position = (view_size - Vector2(420.0, 420.0) * sc) * 0.5
 
 
 ## Patch-notes screen. The body is rebuilt on open so the 2x event
@@ -1484,6 +1962,203 @@ func _refresh_updates() -> void:
 	ChangelogLib.fill(updates_body)
 
 
+## --- Settings screen (v1.7) ------------------------------------------
+## Music/SFX sliders, fullscreen, reduce motion, touch UI override, render
+## quality and a confirmed progress reset. Reachable from the start menu
+## and the pause menu, and every control is touch sized (48dp+).
+func _build_settings() -> void:
+	var p := Control.new()
+	p.name = "Settings"
+	p.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ui_layer.add_child(p)
+	settings_panel = p
+	var bg := ColorRect.new()
+	bg.color = GameTheme.PANEL
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	p.add_child(bg)
+	# A fixed 640x360 content sheet, scaled to fit short windows so the
+	# bottom row never falls off a landscape phone (or the 640x360 min).
+	var content := Control.new()
+	content.name = "SettingsContent"
+	content.size = Vector2(640.0, 360.0)
+	p.add_child(content)
+	settings_content = content
+	var title := UILib.label(content, "SETTINGS", 26, GameTheme.CREAM, true, HORIZONTAL_ALIGNMENT_LEFT)
+	title.position = Vector2(28, 12)
+	var sub := UILib.label(content, "SOUND, SCREEN AND TOUCH OPTIONS - SAVED AUTOMATICALLY", 12,
+			Color("#a8c0cc"))
+	sub.position = Vector2(28, 46)
+
+	var rows := [
+		{"key": "music", "label": "MUSIC", "y": 76.0},
+		{"key": "sfx", "label": "SOUND EFFECTS", "y": 124.0},
+	]
+	for row in rows:
+		var key := String(row["key"])
+		var yv := float(row["y"])
+		var lab := UILib.label(content, String(row["label"]), 16, GameTheme.CREAM, true,
+				HORIZONTAL_ALIGNMENT_LEFT)
+		lab.position = Vector2(40, yv + 8.0)
+		var slider := HSlider.new()
+		slider.min_value = 0.0
+		slider.max_value = 1.0
+		slider.step = 0.05
+		slider.custom_minimum_size = Vector2(330, 44)
+		slider.position = Vector2(230, yv)
+		slider.size = Vector2(330, 44)
+		slider.value = float(GameState.settings.get(key, 0.7))
+		slider.value_changed.connect(_on_volume_changed.bind(key))
+		content.add_child(slider)
+		settings_sliders[key] = slider
+		var val := UILib.label(content, "70%", 16, GameTheme.GOLD, true, HORIZONTAL_ALIGNMENT_RIGHT)
+		val.position = Vector2(570, yv + 8.0)
+		val.size = Vector2(50, 28)
+		settings_sliders[key + "_label"] = val
+
+	settings_fs_btn = UILib.button(content, "FULLSCREEN: OFF", _toggle_fullscreen_setting, 15,
+			GameTheme.PANEL_LIGHT)
+	settings_fs_btn.position = Vector2(40, 180)
+	settings_fs_btn.size = Vector2(270, 44)
+	settings_fs_btn.custom_minimum_size = Vector2(270, 44)
+	settings_motion_btn = UILib.button(content, "REDUCE MOTION: OFF", _toggle_reduce_motion, 15,
+			GameTheme.PANEL_LIGHT)
+	settings_motion_btn.position = Vector2(326, 180)
+	settings_motion_btn.size = Vector2(274, 44)
+	settings_motion_btn.custom_minimum_size = Vector2(274, 44)
+
+	var touch_lab := UILib.label(content, "TOUCH CONTROLS", 14, Color("#a8c0cc"))
+	touch_lab.position = Vector2(40, 240)
+	settings_touch_btn = UILib.button(content, "TOUCH: AUTO", _cycle_touch_ui, 15,
+			GameTheme.PANEL_LIGHT)
+	settings_touch_btn.position = Vector2(222, 234)
+	settings_touch_btn.size = Vector2(170, 44)
+	settings_touch_btn.custom_minimum_size = Vector2(170, 44)
+	var quality_lab := UILib.label(content, "QUALITY", 14, Color("#a8c0cc"))
+	quality_lab.position = Vector2(408, 240)
+	settings_quality_btn = UILib.button(content, "QUALITY: AUTO", _cycle_quality, 15,
+			GameTheme.PANEL_LIGHT)
+	settings_quality_btn.position = Vector2(500, 234)
+	settings_quality_btn.size = Vector2(118, 44)
+	settings_quality_btn.custom_minimum_size = Vector2(118, 44)
+
+	settings_reset_btn = UILib.button(content, "RESET PROGRESS", _on_reset_progress, 15,
+			Color("#6b2f2f"), Color("#8a3a3a"), Color("#4a2020"))
+	settings_reset_btn.position = Vector2(40, 288)
+	settings_reset_btn.size = Vector2(270, 44)
+	settings_reset_btn.custom_minimum_size = Vector2(270, 44)
+	var save_lab := UILib.label(content, "PROGRESS IS SAVED TO THIS DEVICE", 12, Color("#7f8f9e"))
+	save_lab.position = Vector2(40, 338)
+
+	var b := UILib.button(content, "BACK", _on_back, 18, GameTheme.PANEL_LIGHT)
+	b.position = Vector2(426, 288)
+	b.size = Vector2(174, 44)
+	b.custom_minimum_size = Vector2(174, 44)
+	p.visible = false
+	_layout_settings_content()
+
+
+func _layout_settings_content() -> void:
+	if settings_content == null:
+		return
+	var sc := clampf(minf((view_size.x - 24.0) / 640.0,
+			(view_size.y - 24.0) / 360.0), 0.5, 1.0)
+	settings_content.scale = Vector2(sc, sc)
+	settings_content.position = (view_size - Vector2(640.0, 360.0) * sc) * 0.5
+
+
+func _refresh_settings() -> void:
+	if settings_panel == null:
+		return
+	for key in ["music", "sfx"]:
+		var slider: HSlider = settings_sliders.get(key)
+		if slider != null:
+			slider.set_value_no_signal(float(GameState.settings.get(key, 0.7)))
+		var lab: Label = settings_sliders.get(key + "_label")
+		if lab != null:
+			lab.text = "%d%%" % int(round(float(GameState.settings.get(key, 0.7)) * 100.0))
+	if settings_fs_btn != null:
+		settings_fs_btn.text = "FULLSCREEN: %s" % ("ON" if bool(GameState.settings.get("fullscreen", false)) else "OFF")
+	if settings_motion_btn != null:
+		settings_motion_btn.text = "REDUCE MOTION: %s" % ("ON" if GameState.reduce_motion() else "OFF")
+	if settings_touch_btn != null:
+		settings_touch_btn.text = "TOUCH: %s" % GameState.touch_ui_mode().to_upper()
+	if settings_quality_btn != null:
+		settings_quality_btn.text = "QUALITY: %s" % String(GameState.settings.get("quality", "auto")).to_upper()
+	if settings_reset_btn != null and not settings_reset_confirm:
+		settings_reset_btn.text = "RESET PROGRESS"
+
+
+func _on_volume_changed(value: float, key: String) -> void:
+	GameState.set_setting(key, value)
+	var lab: Label = settings_sliders.get(key + "_label")
+	if lab != null:
+		lab.text = "%d%%" % int(round(value * 100.0))
+
+
+func _toggle_fullscreen_setting() -> void:
+	GameState.set_setting("fullscreen", not bool(GameState.settings.get("fullscreen", false)))
+	GameState.play_sound("ui")
+	_refresh_settings()
+
+
+func _toggle_reduce_motion() -> void:
+	GameState.set_setting("reduce_motion", not GameState.reduce_motion())
+	GameState.play_sound("ui")
+	_refresh_settings()
+
+
+func _cycle_touch_ui() -> void:
+	var order := ["auto", "on", "off"]
+	var at := order.find(GameState.touch_ui_mode())
+	GameState.set_setting("touch_ui", order[(at + 1) % order.size()])
+	if touch_controls != null:
+		touch_controls.sync_settings(true)
+	GameState.play_sound("ui")
+	_refresh_settings()
+
+
+func _cycle_quality() -> void:
+	var order := ["auto", "low", "medium", "high"]
+	var at := order.find(String(GameState.settings.get("quality", "auto")))
+	GameState.set_setting("quality", order[(at + 1) % order.size()])
+	_build_ambient_fish()
+	if GameState.quality_level() == 0:
+		ambient_particles.clear()
+	GameState.play_sound("ui")
+	_refresh_settings()
+
+
+func _on_reset_progress() -> void:
+	if not settings_reset_confirm:
+		settings_reset_confirm = true
+		if settings_reset_btn != null:
+			settings_reset_btn.text = "CONFIRM RESET - CLICK AGAIN"
+		GameState.play_sound("buzz")
+		return
+	settings_reset_confirm = false
+	GameState.reset_progress()
+	# the pond is the only unlocked water now - do not strand the player on
+	# a Deep Sea save that reset just locked again
+	is_island = false
+	open_water = false
+	in_boat = false
+	axe_out = false
+	rod_out = true
+	open_water_from = "pond"
+	region = "pond"
+	art_from = art.duplicate(true)
+	art_target = RegionArt.get_art("pond")
+	art = art_target.duplicate(true)
+	art_t = 1.0
+	art_waterline = float(art.get("waterline", WATER_RATIO))
+	_relayout_water()
+	GameState.play_sound("rare")
+	msg("PROGRESS RESET - A BACKUP SAVE WAS KEPT")
+	_refresh_settings()
+	_refresh_stats()
+	_refresh_shop()
+
+
 ## The pause menu can open the Tackle Shop, so the Coconut Isle rods and
 ## the axe are reachable without sailing back to the main menu.
 func _open_shop_from_pause() -> void:
@@ -1496,7 +2171,8 @@ func _open_pause() -> void:
 	if pause_panel == null:
 		return
 	if state == STATE_MENU or state == STATE_INDEX or state == STATE_SHOP \
-			or state == STATE_STATS or state == STATE_CAUGHT or state == STATE_PAUSED:
+			or state == STATE_STATS or state == STATE_CAUGHT or state == STATE_PAUSED \
+			or state == STATE_SETTINGS:
 		return
 	paused_from = state
 	state = STATE_PAUSED
@@ -1540,46 +2216,168 @@ func _build_index() -> void:
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	p.add_child(bg)
 	var title := UILib.label(p, "FISH INDEX", 30, GameTheme.CREAM, true, HORIZONTAL_ALIGNMENT_LEFT)
-	title.position = Vector2(24, 18)
+	title.position = Vector2(24, 16)
 	index_comp_label = UILib.label(p, "COLLECTION: 0%", 18, GameTheme.GOLD, true, HORIZONTAL_ALIGNMENT_LEFT)
-	index_comp_label.position = Vector2(24, 54)
+	index_comp_label.position = Vector2(24, 52)
 	index_filter_btn = UILib.button(p, "REGION: ALL", _cycle_index_region, 14, GameTheme.PANEL_LIGHT,
-			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(190.0, 34.0))
+			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(190.0, 40.0))
 	index_filter_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	index_filter_btn.offset_left = -430
-	index_filter_btn.offset_top = 20
+	index_filter_btn.offset_top = 18
 	index_filter_btn.offset_right = -240
-	index_filter_btn.offset_bottom = 54
+	index_filter_btn.offset_bottom = 58
 	index_uncaught_btn = UILib.button(p, "SHOW: ALL", _toggle_index_uncaught, 14, GameTheme.PANEL_LIGHT,
-			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(190.0, 34.0))
+			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(190.0, 40.0))
 	index_uncaught_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	index_uncaught_btn.offset_left = -220
-	index_uncaught_btn.offset_top = 20
+	index_uncaught_btn.offset_top = 18
 	index_uncaught_btn.offset_right = -24
-	index_uncaught_btn.offset_bottom = 54
+	index_uncaught_btn.offset_bottom = 58
+
+	# left: the species list (works with click, tap, hover and keys)
 	var list := ItemList.new()
 	list.name = "List"
-	list.set_anchors_preset(Control.PRESET_FULL_RECT)
-	list.offset_left = 20
-	list.offset_top = 96
-	list.offset_right = -20
-	list.offset_bottom = -70
+	list.anchor_left = 0.0
+	list.anchor_right = 0.44
+	list.anchor_top = 0.0
+	list.anchor_bottom = 1.0
+	list.offset_left = 20.0
+	list.offset_top = 96.0
+	list.offset_right = -6.0
+	list.offset_bottom = -70.0
+	list.allow_reselect = true
+	list.add_theme_font_size_override("font_size", 15)
+	list.item_selected.connect(_on_index_selected)
 	p.add_child(list)
 	index_list = list
+
+	# right: the detail pane (FishArt, rarity, description, where/when, PB)
+	index_detail = Control.new()
+	index_detail.name = "Detail"
+	index_detail.anchor_left = 0.44
+	index_detail.anchor_right = 1.0
+	index_detail.anchor_top = 0.0
+	index_detail.anchor_bottom = 1.0
+	index_detail.offset_left = 10.0
+	index_detail.offset_top = 96.0
+	index_detail.offset_right = -24.0
+	index_detail.offset_bottom = -70.0
+	index_detail.clip_contents = true
+	p.add_child(index_detail)
+	var dbg := ColorRect.new()
+	dbg.color = Color("#161d2b")
+	dbg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	index_detail.add_child(dbg)
+
+	# On short windows the detail pane is only ~190px tall. Put its fixed
+	# 360px sheet in a scroll container so every field stays reachable
+	# instead of being clipped below the fold.
+	index_detail_scroll = ScrollContainer.new()
+	index_detail_scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	index_detail_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	index_detail_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	index_detail.add_child(index_detail_scroll)
+	index_detail_content = Control.new()
+	index_detail_content.custom_minimum_size = Vector2(0.0, 360.0)
+	index_detail_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	index_detail_scroll.add_child(index_detail_content)
+
+	index_detail_art = Control.new()
+	index_detail_art.anchor_left = 0.0
+	index_detail_art.anchor_right = 1.0
+	index_detail_art.anchor_top = 0.0
+	index_detail_art.anchor_bottom = 0.0
+	index_detail_art.offset_left = 12.0
+	index_detail_art.offset_top = 8.0
+	index_detail_art.offset_right = -12.0
+	index_detail_art.offset_bottom = 116.0
+	index_detail_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	index_detail_content.add_child(index_detail_art)
+	index_detail_art.draw.connect(_draw_index_art)
+
+	index_detail_name = UILib.label(index_detail_content, "", 24, GameTheme.CREAM, true,
+			HORIZONTAL_ALIGNMENT_LEFT)
+	index_detail_name.anchor_left = 0.0
+	index_detail_name.anchor_right = 1.0
+	index_detail_name.offset_left = 14.0
+	index_detail_name.offset_right = -14.0
+	index_detail_name.offset_top = 118.0
+	index_detail_name.offset_bottom = 150.0
+
+	index_detail_rarity = UILib.pill(index_detail_content, "COMMON", GameTheme.get_rarity_color("Common"), 13)
+	index_detail_rarity.position = Vector2(14.0, 156.0)
+	index_detail_rarity.size = Vector2(150.0, 26.0)
+
+	index_detail_desc = UILib.label(index_detail_content, "", 14, Color("#c2d2dc"), false,
+			HORIZONTAL_ALIGNMENT_LEFT)
+	index_detail_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	index_detail_desc.anchor_left = 0.0
+	index_detail_desc.anchor_right = 1.0
+	index_detail_desc.offset_left = 14.0
+	index_detail_desc.offset_right = -14.0
+	index_detail_desc.offset_top = 190.0
+	index_detail_desc.offset_bottom = 236.0
+	index_detail_desc.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+
+	index_detail_where = UILib.label(index_detail_content, "", 14, GameTheme.LEAF, false,
+			HORIZONTAL_ALIGNMENT_LEFT)
+	index_detail_where.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	index_detail_where.anchor_left = 0.0
+	index_detail_where.anchor_right = 1.0
+	index_detail_where.offset_left = 14.0
+	index_detail_where.offset_right = -14.0
+	index_detail_where.offset_top = 240.0
+	index_detail_where.offset_bottom = 292.0
+	index_detail_where.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+
+	index_detail_stats = UILib.label(index_detail_content, "", 15, GameTheme.CREAM, false,
+			HORIZONTAL_ALIGNMENT_LEFT)
+	index_detail_stats.anchor_left = 0.0
+	index_detail_stats.anchor_right = 1.0
+	index_detail_stats.offset_left = 14.0
+	index_detail_stats.offset_right = -14.0
+	index_detail_stats.offset_top = 296.0
+	index_detail_stats.offset_bottom = 322.0
+
+	index_detail_region = UILib.label(index_detail_content, "", 13, Color("#a8c0cc"), false,
+			HORIZONTAL_ALIGNMENT_LEFT)
+	index_detail_region.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	index_detail_region.anchor_left = 0.0
+	index_detail_region.anchor_right = 1.0
+	index_detail_region.offset_left = 14.0
+	index_detail_region.offset_right = -14.0
+	index_detail_region.offset_top = 324.0
+	index_detail_region.offset_bottom = 352.0
+
 	var b := UILib.button(p, "BACK", _on_back, 20, GameTheme.PANEL_LIGHT)
 	b.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	b.offset_left = 24
 	b.offset_top = -60
 	b.offset_right = 184
-	b.offset_bottom = -16
-	b.custom_minimum_size = Vector2(160, 44)
+	b.offset_bottom = -12
+	b.custom_minimum_size = Vector2(160, 48)
 	p.visible = false
+
+
+## Skin a pill label with a new colour (used for the rarity tag).
+func _set_pill(label: Label, text: String, color: Color) -> void:
+	label.text = text
+	label.add_theme_color_override("font_color", Color("#12202c"))
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = color
+	sb.set_corner_radius_all(12)
+	sb.content_margin_left = 8
+	sb.content_margin_right = 8
+	sb.content_margin_top = 3
+	sb.content_margin_bottom = 3
+	label.add_theme_stylebox_override("normal", sb)
 
 
 func _refresh_index() -> void:
 	if index_list == null:
 		return
 	index_list.clear()
+	index_shown_ids.clear()
 	var ids := FishDB.all_ids()
 	var total := ids.size()
 	var caught := 0
@@ -1601,32 +2399,157 @@ func _refresh_index() -> void:
 			name_val = "???"
 		var rarity := String(f.get("rarity", "Common"))
 		var color := GameTheme.get_rarity_color(rarity)
-		var idx := index_list.add_item(name_val)
+		var idx := index_list.add_item("  %s   [%s]" % [name_val, rarity.to_upper()])
 		index_list.set_item_custom_fg_color(idx, color if caught_flag else Color("#5c6a78"))
-		var sub := "RARITY: %s  PB: %.2f KG" % [rarity, float(entry.get("pb_weight", 0.0))]
-		index_list.set_item_tooltip(idx, sub)
+		index_list.set_item_metadata(idx, fid_s)
+		index_shown_ids.append(fid_s)
 	if shown == 0:
 		var empty_idx := index_list.add_item("NO FISH MATCH THIS FILTER")
 		index_list.set_item_disabled(empty_idx, true)
 	var pct := float(caught) / float(total) * 100.0 if total > 0 else 0.0
 	index_comp_label.text = "COLLECTION: %d / %d  (%.0f%%)   SHOWING %d" % [caught, total, pct, shown]
 	if index_filter_btn != null:
-		var region_name := "ALL" if index_filter_region == "" else String(FishDB.REGION_DISPLAY.get(index_filter_region, index_filter_region)).to_upper()
+		var region_name := "ALL" if index_filter_region == "" else RegionArt.display(index_filter_region).to_upper()
 		index_filter_btn.text = "REGION: %s" % region_name
 	if index_uncaught_btn != null:
 		index_uncaught_btn.text = "SHOW: %s" % ("UNCAUGHT" if index_only_uncaught else "ALL")
+	# keep the same fish selected when the filter changes if it is still shown
+	index_selected = clampi(index_selected, -1, index_shown_ids.size() - 1)
+	if index_selected < 0 and not index_shown_ids.is_empty():
+		index_selected = 0
+	if index_selected >= 0 and index_selected < index_shown_ids.size():
+		index_list.select(index_selected)
+		_show_index_detail(index_shown_ids[index_selected])
+	else:
+		_show_index_detail("")
+
+
+func _on_index_selected(idx: int) -> void:
+	if idx < 0 or idx >= index_shown_ids.size():
+		return
+	index_selected = idx
+	_show_index_detail(index_shown_ids[idx])
+
+
+## Hover and keyboard navigation for the list. Both keep the detail pane in
+## sync, so the index is fully usable without a mouse.
+func _update_index_selection() -> void:
+	if index_list == null or index_shown_ids.is_empty():
+		return
+	var moved := 0
+	if Input.is_action_just_pressed("ui_up") or Input.is_action_just_pressed("move_up"):
+		moved = -1
+	elif Input.is_action_just_pressed("ui_down") or Input.is_action_just_pressed("move_down"):
+		moved = 1
+	if moved != 0:
+		index_selected = (index_selected + moved + index_shown_ids.size()) % index_shown_ids.size()
+		index_list.select(index_selected)
+		_show_index_detail(index_shown_ids[index_selected])
+		GameState.play_sound("ui")
+		return
+	var hovered := index_list.get_item_at_position(index_list.get_local_mouse_position())
+	if hovered >= 0 and hovered < index_shown_ids.size() and hovered != index_selected:
+		index_selected = hovered
+		index_list.select(hovered)
+		_show_index_detail(index_shown_ids[index_selected])
+
+
+func _show_index_detail(fid: String) -> void:
+	if index_detail == null:
+		return
+	if fid == "":
+		index_detail_fish = {}
+		index_detail_caught = false
+		index_detail_name.text = "SELECT A FISH"
+		_set_pill(index_detail_rarity, "INDEX", Color("#4b5a70"))
+		index_detail_desc.text = "Pick a species to see its art, rarity, where and when it bites, and your personal best."
+		index_detail_where.text = ""
+		index_detail_stats.text = "COLLECTION: %.0f%%" % (GameState.completion_percent() * 100.0)
+		index_detail_region.text = ""
+		if index_detail_art != null:
+			index_detail_art.queue_redraw()
+		return
+	var f := FishDB.fish_data(fid)
+	var entry: Dictionary = GameState.index.get(fid, {})
+	var caught := bool(entry.get("caught", false))
+	var rarity := String(f.get("rarity", "Common"))
+	index_detail_fish = f
+	index_detail_caught = caught
+	index_detail_name.text = String(f.get("name", fid)).to_upper() if caught else "???"
+	_set_pill(index_detail_rarity, rarity.to_upper(),
+			GameTheme.get_rarity_color(rarity) if caught else Color("#485566"))
+	if caught:
+		index_detail_desc.text = String(f.get("desc", ""))
+	else:
+		index_detail_desc.text = "Not discovered yet. Catch it to fill in this entry."
+	index_detail_where.text = _index_where_text(f, caught)
+	if caught:
+		index_detail_stats.text = "PB: %.2f KG    CAUGHT: %d" % [float(entry.get("pb_weight", 0.0)),
+				int(entry.get("count", 0))]
+	else:
+		index_detail_stats.text = "PB: --    CAUGHT: 0"
+	var region_name := String(f.get("region", "pond"))
+	var region_fishes := FishDB.fish_by_region(region_name)
+	var region_caught := 0
+	for rf in region_fishes:
+		var rid := String(rf.get("id", ""))
+		if bool((GameState.index.get(rid, {}) as Dictionary).get("caught", false)):
+			region_caught += 1
+	var pct := 0.0
+	if region_fishes.size() > 0:
+		pct = float(region_caught) / float(region_fishes.size()) * 100.0
+	index_detail_region.text = "%s COMPLETION: %d / %d  (%.0f%%)" % [
+			RegionArt.display(region_name).to_upper(), region_caught, region_fishes.size(), pct]
+	if index_detail_scroll != null:
+		index_detail_scroll.scroll_vertical = 0
+	if index_detail_art != null:
+		index_detail_art.queue_redraw()
+
+
+func _index_where_text(f: Dictionary, caught: bool) -> String:
+	if not caught:
+		return "WHERE: ???    WHEN: ???"
+	var where := RegionArt.display(String(f.get("region", "pond"))).to_upper()
+	var when := "ANY TIME"
+	match String(f.get("time", "")):
+		"day": when = "DAY ONLY"
+		"night": when = "NIGHT ONLY"
+	var weather := String(f.get("weather", ""))
+	if weather == "rain":
+		when += " - RAIN"
+	elif weather == "storm":
+		when += " - THUNDERSTORM"
+	elif weather != "":
+		when += " - " + weather.to_upper()
+	if bool(f.get("bait_only", false)):
+		when += " - NEEDS BAIT"
+	return "WHERE: %s\nWHEN: %s" % [where, when]
+
+
+func _draw_index_art() -> void:
+	if index_detail_art == null:
+		return
+	if index_detail_art.size.x < 16.0 or index_detail_art.size.y < 16.0:
+		return
+	var r := Rect2(Vector2(10.0, 4.0), index_detail_art.size - Vector2(20.0, 8.0))
+	if index_detail_fish.is_empty():
+		RegionArt.draw_glyph(index_detail_art, "pond", r.get_center(), 40.0, Color("#3b4a63"))
+		return
+	FishArt.draw_fish(index_detail_art, r, index_detail_fish, not index_detail_caught, 1.0)
 
 
 func _cycle_index_region() -> void:
 	var options := ["", "pond", "river", "lake", "ocean", "open", "island"]
 	var at := options.find(index_filter_region)
 	index_filter_region = String(options[(at + 1) % options.size()])
+	index_selected = 0
 	GameState.play_sound("ui")
 	_refresh_index()
 
 
 func _toggle_index_uncaught() -> void:
 	index_only_uncaught = not index_only_uncaught
+	index_selected = 0
 	GameState.play_sound("ui")
 	_refresh_index()
 
@@ -1656,6 +2579,7 @@ func _build_shop() -> void:
 	scroll.offset_top = 68
 	scroll.offset_right = -24
 	scroll.offset_bottom = -72
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	p.add_child(scroll)
 	shop_scroll = scroll
 	shop_content = VBoxContainer.new()
@@ -1723,7 +2647,7 @@ func _shop_cat(title: String, category: String, buy_func: Callable) -> void:
 		var owned := bool(d.get("owned", false)) and not is_bait
 		var equipped := String(GameState.gear.get(GameState.gear_key(category), "")) == String(id)
 		var row := Control.new()
-		row.custom_minimum_size = Vector2(600.0, 50.0)
+		row.custom_minimum_size = Vector2(0.0, 50.0)
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		shop_content.add_child(row)
 		var name_l := UILib.label(row, String(d.get("name", id)), 17, GameTheme.CREAM, true)
@@ -1787,7 +2711,7 @@ func _craft_section() -> void:
 func _craft_row(item_name: String, desc: String, stat: String, btn_text: String,
 		cb: Callable) -> void:
 	var row := Control.new()
-	row.custom_minimum_size = Vector2(600.0, 50.0)
+	row.custom_minimum_size = Vector2(0.0, 50.0)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	shop_content.add_child(row)
 	var name_l := UILib.label(row, item_name, 17, GameTheme.CREAM, true)
@@ -1835,7 +2759,18 @@ func _is_equipped(category: String, id: String) -> bool:
 
 func _stat_line(category: String, d: Dictionary) -> String:
 	match category:
-		"rods": return "SPEED: %.1fx  WINDOW: %.2f" % [float(d.get("reel_speed", 1.0)), float(d.get("timing_window", 0.2))]
+		"rods":
+			var tw := float(d.get("timing_window", 0.18))
+			var tier := 0
+			if tw >= 0.40:
+				tier = 4
+			elif tw >= 0.34:
+				tier = 3
+			elif tw >= 0.26:
+				tier = 2
+			elif tw >= 0.20:
+				tier = 1
+			return "REEL: %.1fx  PRECISION: %d/4" % [float(d.get("reel_speed", 1.0)), tier]
 		"lines": return "KEEP: %.0f%%" % [(1.0 - float(d.get("escape_chance", 0.3))) * 100.0]
 		"baits":
 			var bait_id := String(d.get("id", ""))
@@ -1889,19 +2824,36 @@ func _on_sell_all() -> void:
 	_refresh_shop()
 
 
+## The menu panel is designed at 520x480. Shrink the whole panel on short
+## windows (a landscape phone or the 640x360 minimum) instead of drawing
+## the title and the last button off-screen.
+func _menu_scale() -> float:
+	return clampf(minf((view_size.x - 16.0) / 520.0,
+			(view_size.y - 16.0) / float(MENU_PANEL_H)), 0.4, 1.0)
+
+
 func _menu_button_rects() -> Array:
+	var sc := _menu_scale()
+	var vw := view_size.x / sc
+	var vh := view_size.y / sc
 	var bw := 260.0
 	var bh := 36.0
-	var bx := (view_size.x - bw) * 0.5
-	var by := (view_size.y - MENU_PANEL_H) * 0.5 + 150.0
-	return [
-		{"id": "start", "rect": Rect2(bx, by, bw, bh), "label": "START FISHING"},
-		{"id": "index", "rect": Rect2(bx, by + 40.0, bw, bh), "label": "FISH INDEX"},
-		{"id": "shop", "rect": Rect2(bx, by + 80.0, bw, bh), "label": "TACKLE SHOP"},
-		{"id": "stats", "rect": Rect2(bx, by + 120.0, bw, bh), "label": "STATS & SOUND"},
-		{"id": "updates", "rect": Rect2(bx, by + 160.0, bw, bh),
+	var bx := (vw - bw) * 0.5
+	var by := (vh - MENU_PANEL_H) * 0.5 + 150.0
+	var defs := [
+		{"id": "start", "y": by, "label": "START FISHING"},
+		{"id": "index", "y": by + 40.0, "label": "FISH INDEX"},
+		{"id": "shop", "y": by + 80.0, "label": "TACKLE SHOP"},
+		{"id": "stats", "y": by + 120.0, "label": "STATS & SOUND"},
+		{"id": "settings", "y": by + 160.0, "label": "SETTINGS"},
+		{"id": "updates", "y": by + 200.0,
 				"label": "WHAT'S NEW!" if ChangelogLib.is_unseen() else "WHAT'S NEW"},
 	]
+	var out: Array = []
+	for d in defs:
+		out.append({"id": d["id"], "label": d["label"],
+				"rect": Rect2(Vector2(bx, float(d["y"])) * sc, Vector2(bw, bh) * sc)})
+	return out
 
 
 func _pixel_rect(r: Rect2, c: Color) -> void:
@@ -1963,18 +2915,22 @@ func _draw() -> void:
 	_draw_mountains()
 	if open_water:
 		_draw_islands(t)
-	elif not is_island:
-		_draw_pines()
+	elif String(art.get("trees", "pine")) != "none" and not is_island:
+		_draw_treeline(t)
 	_draw_water(t)
 	_draw_underwater_decor(t)
 	_draw_ambient_fish(t)
 	if not open_water:
 		_draw_bank()
+	_draw_region_props(t)
 	if is_island:
 		_draw_palms(t)
+	_draw_ambient_particles(t)
+	_draw_splashes()
 	_draw_fisher(t)
 	_draw_line_and_bobber(t)
 	_draw_weather(t)
+	_draw_water_wipe()
 
 	draw_set_transform(Vector2.ZERO)
 
@@ -1986,6 +2942,7 @@ func _draw() -> void:
 		_draw_reel_meter()
 	if state == STATE_CAUGHT:
 		_draw_catch_popup()
+	_draw_coin_fly()
 	if hurt_flash > 0.0:
 		draw_rect(Rect2(-40.0, -40.0, view_size.x + 80.0, view_size.y + 80.0),
 				Color(1.0, 0.18, 0.28, hurt_flash * 0.32))
@@ -1994,11 +2951,20 @@ func _draw() -> void:
 				Color(1.0, 1.0, 1.0, flash * 0.45))
 
 
+## Palette helper: blend a day colour from the region table into night.
+func _day_night(c: Color, nf: float, night_c: Color) -> Color:
+	return c.lerp(night_c, nf)
+
+
+func _art_c(key: String, fallback := Color.WHITE) -> Color:
+	return art.get(key, fallback)
+
+
 func _draw_sky() -> void:
 	var nf := _night_factor()
-	var top := GameTheme.SKY_TOP.lerp(GameTheme.SKY_NIGHT_TOP, nf)
-	var mid := GameTheme.SKY_MID.lerp(GameTheme.SKY_NIGHT_MID, nf)
-	var low := GameTheme.SKY_LOW.lerp(GameTheme.SKY_NIGHT_LOW, nf)
+	var top := _day_night(_art_c("sky_top"), nf, _art_c("night_top"))
+	var mid := _day_night(_art_c("sky_mid"), nf, _art_c("night_mid"))
+	var low := _day_night(_art_c("sky_low"), nf, _art_c("night_low"))
 	var bands := 24
 	for i in range(bands):
 		var y0 := water_line * float(i) / float(bands)
@@ -2011,22 +2977,24 @@ func _draw_sky() -> void:
 			c = mid.lerp(low, clampf((tt - 0.45) / 0.55, 0.0, 1.0))
 		draw_rect(Rect2(0.0, y0, view_size.x, y1 - y0 + 1.0), c)
 
-	var sun_c := Color("#fff2cf")
+	var sun_c := _art_c("sun", Color("#fff2cf"))
 	if is_night:
 		sun_c = Color("#e9edf7")
-	_draw_pixel_circle(Vector2(view_size.x * 0.74, 96.0), 24.0, sun_c, 4.0)
+	var sun_y := 84.0 if String(art.get("glyph", "pond")) != "ocean" else 120.0
+	_draw_pixel_circle(Vector2(view_size.x * 0.74, sun_y), 24.0, sun_c, 4.0)
 	if not is_night:
 		for i in range(6):
-			_draw_pixel_circle(Vector2(view_size.x * 0.74 + 26.0 + float(i) * 3.0, 74.0 + float(i) * 6.0),
-					3.0, GameTheme.SKY_MID, 2.0)
+			_draw_pixel_circle(Vector2(view_size.x * 0.74 + 26.0 + float(i) * 3.0,
+					sun_y - 22.0 + float(i) * 6.0), 3.0, mid, 2.0)
 
 
 func _draw_clouds(t: float) -> void:
 	var nf := _night_factor()
-	var base := Color("#fdf2f5")
+	var base := _art_c("cloud", Color("#fdf2f5"))
 	base.a = 0.8
 	base = base.lerp(Color("#232a4a", 0.65), nf)
-	for i in range(6):
+	var count := 6 if GameState.quality_level() >= 1 else 4
+	for i in range(count):
 		var y := 40.0 + float(i) * 27.0
 		var x := fposmod(float(i) * 197.0 + t * (4.0 + float(i) * 2.0), view_size.x + 320.0) - 160.0
 		var w := 150.0 + float(i) * 45.0
@@ -2045,11 +3013,17 @@ func _mountain_height(x: float, f: float, amp: float, off: float) -> float:
 func _draw_mountains() -> void:
 	var nf := _night_factor()
 	var layers := [
-		{"c": GameTheme.MOUNTAIN_FAR, "amp": 58.0, "off": 0.0, "w": 8.0, "f": 0.0026},
-		{"c": GameTheme.MOUNTAIN_MID, "amp": 42.0, "off": 1.7, "w": 8.0, "f": 0.0041},
-		{"c": GameTheme.MOUNTAIN_NEAR, "amp": 28.0, "off": 3.4, "w": 10.0, "f": 0.0062},
+		{"c": _art_c("mtn_far"), "amp": 58.0, "off": 0.0, "w": 8.0, "f": 0.0026},
+		{"c": _art_c("mtn_mid"), "amp": 42.0, "off": 1.7, "w": 8.0, "f": 0.0041},
+		{"c": _art_c("mtn_near"), "amp": 28.0, "off": 3.4, "w": 10.0, "f": 0.0062},
 	]
-	for l in layers:
+	var count := 3
+	if open_water:
+		count = 1
+	elif is_island:
+		count = 2
+	for li in range(count):
+		var l: Dictionary = layers[li]
 		var c: Color = (l["c"] as Color).lerp(Color("#161c30"), nf)
 		var x := 0.0
 		while x < view_size.x:
@@ -2061,11 +3035,12 @@ func _draw_mountains() -> void:
 ## Horizon decor for the open-water section: low sand islands with palms.
 func _draw_islands(t: float) -> void:
 	var nf := _night_factor()
-	var sand := GameTheme.SAND.darkened(0.1 + nf * 0.45)
-	var sand_l := GameTheme.SAND.lightened(0.05).darkened(nf * 0.5)
+	var sand := _art_c("bank").darkened(0.1 + nf * 0.45)
+	var sand_l := _art_c("bank_light").lightened(0.05).darkened(nf * 0.5)
 	var trunk := GameTheme.WOOD_DARK.lerp(Color("#101522"), nf)
-	var leaf := GameTheme.PINE.lerp(Color("#0f1a22"), nf)
-	for i in range(3):
+	var leaf := _art_c("tree").lerp(Color("#0f1a22"), nf)
+	var count := 3 if GameState.quality_level() >= 1 else 2
+	for i in range(count):
 		var ix := view_size.x * (0.16 + 0.34 * float(i)) + sin(t * 0.1 + float(i) * 1.7) * 2.0
 		var iw := 110.0 + float(i) * 36.0
 		_pixel_rect(Rect2(ix - iw * 0.5, water_line - 11.0, iw, 13.0), sand)
@@ -2088,50 +3063,141 @@ func _draw_pine(x: float, base_y: float, h: float, w: float, c: Color) -> void:
 	_pixel_rect(Rect2(x - 2.0, base_y - h * 0.24, 4.0, h * 0.24), Color("#2a1f1c"))
 
 
-func _draw_pines() -> void:
+## Rounded cottagecore willow for the pond bank.
+func _draw_willow(x: float, base_y: float, h: float, c: Color, dark: Color, t: float) -> void:
+	_pixel_rect(Rect2(x - 4.0, base_y - h * 0.7, 8.0, h * 0.7), Color("#5c4230"))
+	var crown := Vector2(x, base_y - h * 0.78)
+	_draw_pixel_circle(crown, h * 0.34, c, 4.0)
+	_draw_pixel_circle(crown + Vector2(-h * 0.18, h * 0.06), h * 0.22, c.lightened(0.08), 4.0)
+	_draw_pixel_circle(crown + Vector2(h * 0.2, h * 0.04), h * 0.20, dark, 4.0)
+	for k in range(3):
+		var sway := sin(t * 0.8 + float(k) * 1.2 + x * 0.01) * 2.0
+		var fx := x - h * 0.3 + float(k) * h * 0.28 + sway
+		draw_line(Vector2(fx, base_y - h * 0.8), Vector2(fx - 4.0, base_y - h * 0.35),
+				dark, 3.0)
+
+
+## White-trunked birch for the river bank.
+func _draw_birch(x: float, base_y: float, h: float, c: Color, dark: Color) -> void:
+	var trunk := Color("#e6e2d6")
+	_pixel_rect(Rect2(x - 3.0, base_y - h * 0.75, 6.0, h * 0.75), trunk)
+	for k in range(4):
+		var y := base_y - h * 0.2 - float(k) * h * 0.14
+		_pixel_rect(Rect2(x - 3.0, y, 6.0, 2.0), Color("#4a4a46"))
+	var crown := Vector2(x, base_y - h * 0.82)
+	_draw_pixel_circle(crown, h * 0.26, c, 4.0)
+	_draw_pixel_circle(crown + Vector2(-h * 0.15, h * 0.05), h * 0.18, dark, 4.0)
+
+
+func _draw_treeline(t: float) -> void:
 	var nf := _night_factor()
-	var rows := [
-		{"c": GameTheme.PINE.lerp(Color("#0f1721"), nf), "h": 34.0, "w": 13.0, "gap": 27.0, "off": 6.0},
-		{"c": GameTheme.PINE_DARK.lerp(Color("#0a1119"), nf), "h": 48.0, "w": 17.0, "gap": 37.0, "off": 18.0},
-	]
-	for r in rows:
-		var x := 20.0 + float(r["off"])
-		while x < view_size.x:
-			var hgt := maxf(18.0, float(r["h"]) + sin(x * 0.11) * 7.0 + sin(x * 0.031) * 5.0)
-			_draw_pine(x, water_line + 8.0, hgt, float(r["w"]), r["c"])
-			x += float(r["gap"])
+	var trees := String(art.get("trees", "pine"))
+	var c := _art_c("tree").lerp(Color("#0f1721"), nf * 0.85)
+	var dark := _art_c("tree_dark").lerp(Color("#0a1119"), nf * 0.85)
+	var q := GameState.quality_level()
+	match trees:
+		"willow":
+			var x := 24.0
+			while x < view_size.x:
+				var hgt := 46.0 + sin(x * 0.045) * 10.0 + sin(x * 0.021) * 6.0
+				_draw_willow(x, water_line + 10.0, hgt, c, dark, t)
+				x += 74.0 if q >= 1 else 104.0
+		"birch":
+			var x := 26.0
+			while x < view_size.x:
+				var hgt := 44.0 + sin(x * 0.06) * 11.0 + sin(x * 0.027) * 5.0
+				_draw_birch(x, water_line + 10.0, hgt, c, dark)
+				x += 58.0 if q >= 1 else 84.0
+		_:
+			var rows := [
+				{"c": c, "h": 34.0, "w": 13.0, "gap": 27.0, "off": 6.0},
+				{"c": dark, "h": 48.0, "w": 17.0, "gap": 37.0, "off": 18.0},
+			]
+			if q == 0:
+				rows = [rows[1]]
+			for r in rows:
+				var x := 20.0 + float(r["off"])
+				while x < view_size.x:
+					var hgt := maxf(18.0, float(r["h"]) + sin(x * 0.11) * 7.0 + sin(x * 0.031) * 5.0)
+					_draw_pine(x, water_line + 8.0, hgt, float(r["w"]), r["c"])
+					x += float(r["gap"])
 
 
 func _draw_water(t: float) -> void:
 	var nf := _night_factor()
 	var depth := view_size.y - water_line
 	var bands := 22
+	var deep_night := Color("#0a1120")
 	for i in range(bands):
 		var y0 := water_line + depth * float(i) / float(bands)
 		var y1 := water_line + depth * float(i + 1) / float(bands)
 		var tt := float(i) / float(bands)
-		var c := GameTheme.WATER_SHALLOW.lerp(GameTheme.WATER_MID, clampf(tt * 1.8, 0.0, 1.0))
-		c = c.lerp(GameTheme.WATER_DEEP.lerp(Color("#0a1120"), nf), clampf(tt * 1.1, 0.0, 1.0))
+		var c := _art_c("w_shallow").lerp(_art_c("w_mid"), clampf(tt * 1.8, 0.0, 1.0))
+		c = c.lerp(_art_c("w_deep").lerp(deep_night, nf), clampf(tt * 1.1, 0.0, 1.0))
 		draw_rect(Rect2(0.0, y0, view_size.x, y1 - y0 + 1.0), c)
 
-	var surf := GameTheme.WATER_SURFACE.lerp(Color("#9fb6c8"), nf)
+	var surf := _day_night(_art_c("w_surface"), nf, Color("#9fb6c8"))
+	match String(art.get("wave", "ripples")):
+		"current":
+			for i in range(34):
+				var cx := fposmod(float(i) * 83.0 + t * (110.0 + float(i % 7) * 26.0),
+						view_size.x + 120.0) - 60.0
+				var cy := water_line + 8.0 + fposmod(float(i) * 47.0, maxf(1.0, depth - 12.0))
+				draw_rect(Rect2(cx, cy, 18.0 + float(i % 4) * 8.0, 2.0),
+						Color(surf.r, surf.g, surf.b, 0.22))
+			for i in range(8):
+				var rx := fposmod(float(i) * 151.0 + t * 12.0, view_size.x)
+				var ry := water_line + 20.0 + float(i % 3) * 26.0
+				_pixel_rect(Rect2(rx, ry, 14.0, 4.0), Color(1.0, 1.0, 1.0, 0.32))
+		"glassy":
+			var sun_x := view_size.x * 0.74
+			for i in range(12):
+				var ry := water_line + 6.0 + float(i) * 7.0
+				var rw := 26.0 + float(i) * 16.0
+				draw_rect(Rect2(sun_x - rw * 0.5 + sin(t * 0.7 + float(i)) * 5.0, ry, rw, 2.0),
+						Color(surf.r, surf.g, surf.b, 0.12))
+			for i in range(18):
+				var cx := fposmod(float(i) * 127.0 + t * 5.0, view_size.x)
+				var cy := water_line + 14.0 + fposmod(float(i) * 71.0, maxf(1.0, depth - 20.0))
+				draw_rect(Rect2(cx, cy, 34.0 + float(i % 3) * 18.0, 2.0),
+						Color(surf.r, surf.g, surf.b, 0.10 + float(i % 3) * 0.02))
+		"swell":
+			for i in range(9):
+				var base_y := water_line + 16.0 + float(i) * (depth - 20.0) / 9.0
+				for k in range(3):
+					var cx := fposmod(float(k) * 210.0 + float(i) * 61.0
+							+ t * (9.0 + float(i) * 1.5), view_size.x + 240.0) - 120.0
+					var wy := base_y + sin(t * 1.1 + float(i) * 0.9 + float(k)) * 5.0
+					var ww := 80.0 + float(i % 4) * 24.0
+					draw_rect(Rect2(cx, wy, ww, 4.0), Color(surf.r, surf.g, surf.b, 0.16))
+					_pixel_rect(Rect2(cx + ww * 0.15, wy - 4.0, ww * 0.3, 3.0),
+							Color(1.0, 1.0, 1.0, 0.20))
+		_:
+			for i in range(26):
+				var cx := fposmod(float(i) * 61.0 + t * 9.0, view_size.x)
+				var cy := water_line + 10.0 + fposmod(float(i) * 43.0, maxf(1.0, depth - 10.0))
+				draw_rect(Rect2(cx, cy, 10.0, 2.0), Color(surf.r, surf.g, surf.b, 0.18))
+			for i in range(10):
+				var cx := fposmod(float(i) * 149.0 + t * 4.0, view_size.x)
+				draw_line(Vector2(cx, water_line + 18.0 + float(i % 4) * 18.0),
+						Vector2(cx + 12.0, water_line + 18.0 + float(i % 4) * 18.0),
+						Color(1.0, 1.0, 1.0, 0.08), 1.0)
+
 	var x := 0.0
+	var step := 14.0 if String(art.get("wave", "ripples")) != "glassy" else 26.0
 	while x < view_size.x:
 		var w := 6.0 + absf(sin(x * 0.05 + t * 1.6)) * 10.0
 		draw_rect(Rect2(x, water_line - 3.0, w, 4.0), surf)
-		x += 14.0
-
-	for i in range(40):
-		var cx := fposmod(float(i) * 61.0 + t * 9.0, view_size.x)
-		var cy := water_line + 10.0 + sin(t * 1.3 + float(i)) * 4.0
-		draw_rect(Rect2(cx, cy, 10.0, 2.0), Color(surf.r, surf.g, surf.b, 0.18))
+		x += step
 
 
 func _draw_underwater_decor(t: float) -> void:
 	var nf := _night_factor()
-	var weed := GameTheme.GRASS_DARK.lerp(Color("#0d1c14"), 0.2 + nf * 0.6)
-	for i in range(16):
-		var sx := 70.0 + float(i) * 38.0
+	var q := GameState.quality_level()
+	var weed := _art_c("tree_dark").lerp(Color("#0d1c14"), 0.2 + nf * 0.6)
+	var weed_count := 16 if q >= 2 else (9 if q >= 1 else 5)
+	for i in range(weed_count):
+		var sx := 70.0 + float(i) * (38.0 if q >= 1 else 70.0)
 		if sx > view_size.x - 20.0:
 			break
 		var seg := (view_size.y - water_line) * 0.45
@@ -2142,8 +3208,9 @@ func _draw_underwater_decor(t: float) -> void:
 			var sway := sin(t * 1.2 + float(i) * 0.7 + float(k) * 0.5) * 6.0
 			_pixel_rect(Rect2(sx + sway, y, 5.0, 13.0), weed)
 
-	var rock := Color("#2b3446").lerp(Color("#0d1320"), nf)
-	for i in range(6):
+	var rock := _art_c("bank_dark").lerp(Color("#0d1320"), nf)
+	var rock_count := 6 if not open_water else 3
+	for i in range(rock_count):
 		var rx := view_size.x - 100.0 + float(i) * 17.0
 		var ry := view_size.y - 24.0
 		_draw_pixel_circle(Vector2(rx, ry), 12.0 + float(i % 3) * 5.0, rock, 4.0)
@@ -2153,11 +3220,12 @@ func _draw_underwater_decor(t: float) -> void:
 		var by := view_size.y - 32.0 - sin(float(i) * 0.9) * 14.0
 		_pixel_rect(Rect2(bx, by, 28.0, 5.0), Color("#2c2422"))
 
-	for i in range(12):
+	var bubbles := 12 if q >= 2 else 7
+	for i in range(bubbles):
 		var bx := fposmod(float(i) * 137.0 - t * 10.0, view_size.x)
 		var span := maxf(20.0, view_size.y - water_line - 30.0)
 		var by := water_line + fposmod(float(i) * 91.0 + t * 26.0, span) + 12.0
-		_draw_pixel_circle(Vector2(bx, by), 2.0 + float(i % 3), Color("#cfe6f0", 0.35), 2.0)
+		_draw_pixel_circle(Vector2(bx, by), 2.0 + float(i % 3), Color(0.81, 0.9, 0.94, 0.35), 2.0)
 
 
 func _draw_ambient_fish(t: float) -> void:
@@ -2166,47 +3234,97 @@ func _draw_ambient_fish(t: float) -> void:
 		var y := float(f["y"]) + sin(float(f["phase"])) * float(f["amp"])
 		var s := float(f["scale"])
 		var rect := Rect2(float(f["x"]) - s * 1.5, y - s * 0.55, s * 3.0, s * 1.1)
-		# at night they read as soft shadows in the water
 		FishArt.draw_fish(self, rect, fish, is_night, float(f["dir"]))
 
 
 func _draw_bank() -> void:
 	var nf := _night_factor()
-	if is_island:
-		_draw_island_bank(nf)
+	var style := String(art.get("bank_style", "grass"))
+	if style == "none":
 		return
-	var dirt := GameTheme.DIRT.lerp(Color("#14161f"), nf)
-	var dirt_l := GameTheme.DIRT_LIGHT.lerp(Color("#1e2028"), nf)
 	var h := view_size.y - bank_top
-	draw_rect(Rect2(0.0, bank_top, bank_w, h + 2.0), dirt)
-	_pixel_rect(Rect2(0.0, bank_top + h * 0.55, bank_w, 6.0), dirt_l)
-	for i in range(46):
-		var sx := fmod(float(i) * 71.0, bank_w - 12.0)
-		var sy := bank_top + 22.0 + fmod(float(i) * 53.0, maxf(1.0, h - 34.0))
-		_pixel_rect(Rect2(sx, sy, 6.0, 4.0), dirt_l if i % 2 == 0 else dirt.darkened(0.25))
-
-	_pixel_rect(Rect2(0.0, bank_top - 10.0, bank_w, 14.0), GameTheme.GRASS)
-	_pixel_rect(Rect2(0.0, bank_top + 4.0, bank_w, 6.0), GameTheme.GRASS_DARK)
-	for i in range(0, int(bank_w), 16):
-		var bh := 5.0 + absf(sin(float(i) * 0.37)) * 9.0
-		_pixel_rect(Rect2(float(i), bank_top - 10.0 - bh, 4.0, bh), GameTheme.GRASS)
-
-	for i in range(9):
-		_pixel_rect(Rect2(bank_w - 2.0 - float(i) * 3.0, bank_top + 16.0 + float(i) * 9.0, 7.0, 7.0),
-				GameTheme.ROCK)
+	match style:
+		"gravel":
+			var gravel := _day_night(_art_c("bank"), nf, Color("#14161f"))
+			var gravel_l := _day_night(_art_c("bank_light"), nf, Color("#1e2028"))
+			var soil := _day_night(_art_c("bank_soil"), nf, Color("#14161f"))
+			draw_rect(Rect2(0.0, bank_top, bank_w, h + 2.0), soil)
+			_pixel_rect(Rect2(0.0, bank_top - 6.0, bank_w, 14.0), gravel)
+			_pixel_rect(Rect2(0.0, bank_top + 6.0, bank_w, 8.0), gravel_l)
+			for i in range(56):
+				var sx := fmod(float(i) * 59.0 + 7.0, maxf(1.0, bank_w - 10.0))
+				var sy := bank_top - 4.0 + fmod(float(i) * 37.0, maxf(1.0, h - 10.0))
+				var r := 3.0 + float(i % 3) * 2.0
+				_draw_pixel_circle(Vector2(sx, sy), r,
+						gravel_l if i % 2 == 0 else gravel.darkened(0.18), 2.0)
+			for i in range(9):
+				var sx := 18.0 + float(i) * 41.0
+				if sx > bank_w - 12.0:
+					break
+				_pixel_rect(Rect2(sx, bank_top - 12.0, 3.0, 9.0),
+						_art_c("tree").lerp(Color("#141a16"), nf * 0.6))
+		"stone":
+			var stone := _day_night(_art_c("bank"), nf, Color("#14161f"))
+			var stone_d := _day_night(_art_c("bank_dark"), nf, Color("#10131c"))
+			var stone_l := _day_night(_art_c("bank_light"), nf, Color("#1e2028"))
+			draw_rect(Rect2(0.0, bank_top, bank_w, h + 2.0), stone_d)
+			var row_h := 22.0
+			var y := bank_top
+			var row := 0
+			while y < view_size.y:
+				var off := 0.0 if row % 2 == 0 else 34.0
+				var x := off
+				while x < bank_w:
+					_pixel_rect(Rect2(x + 2.0, y + 2.0, 30.0, row_h - 4.0), stone)
+					_pixel_rect(Rect2(x + 2.0, y + 2.0, 30.0, 3.0), stone_l)
+					x += 34.0
+				y += row_h
+				row += 1
+			for i in range(4):
+				var bx := 40.0 + float(i) * 92.0
+				_pixel_rect(Rect2(bx, bank_top - 18.0, 8.0, 20.0), Color("#3f4650"))
+				_pixel_rect(Rect2(bx - 3.0, bank_top - 22.0, 14.0, 6.0), Color("#5b636e"))
+			_draw_pixel_circle(Vector2(bank_w - 46.0, bank_top + 32.0), 11.0, Color("#b0905a"), 3.0)
+			_draw_pixel_circle(Vector2(bank_w - 46.0, bank_top + 32.0), 6.0, Color("#8a6c40"), 3.0)
+			_pixel_rect(Rect2(0.0, bank_top - 3.0, bank_w, 4.0), stone_l)
+		"sand":
+			_draw_island_bank(nf)
+		_:
+			var soil := _day_night(_art_c("bank_soil"), nf, Color("#14161f"))
+			var soil_l := _day_night(_art_c("bank_soil_light"), nf, Color("#1e2028"))
+			draw_rect(Rect2(0.0, bank_top, bank_w, h + 2.0), soil)
+			_pixel_rect(Rect2(0.0, bank_top + h * 0.55, bank_w, 6.0), soil_l)
+			for i in range(46):
+				var sx := fmod(float(i) * 71.0, bank_w - 12.0)
+				var sy := bank_top + 22.0 + fmod(float(i) * 53.0, maxf(1.0, h - 34.0))
+				_pixel_rect(Rect2(sx, sy, 6.0, 4.0), soil_l if i % 2 == 0 else soil.darkened(0.25))
+			var grass := _day_night(_art_c("bank"), nf, Color("#141a20"))
+			var grass_d := _day_night(_art_c("bank_dark"), nf, Color("#10161c"))
+			_pixel_rect(Rect2(0.0, bank_top - 10.0, bank_w, 14.0), grass)
+			_pixel_rect(Rect2(0.0, bank_top + 4.0, bank_w, 6.0), grass_d)
+			var tuft := 16.0 if GameState.quality_level() >= 1 else 26.0
+			var ti := 0.0
+			while ti < bank_w:
+				var bh := 5.0 + absf(sin(ti * 0.37)) * 9.0
+				_pixel_rect(Rect2(ti, bank_top - 10.0 - bh, 4.0, bh), grass)
+				ti += tuft
+			for i in range(9 if GameState.quality_level() >= 1 else 5):
+				_pixel_rect(Rect2(bank_w - 2.0 - float(i) * 3.0,
+						bank_top + 16.0 + float(i) * 9.0, 7.0, 7.0),
+						_day_night(GameTheme.ROCK, nf, Color("#10131c")))
 
 
 func _draw_island_bank(nf: float) -> void:
 	# A bright tropical beach in place of the usual grass bank, with a
 	# little jetty on the right and the path home on the left.
-	var sand := GameTheme.SAND.darkened(nf * 0.5)
-	var dry := Color("#f0d9a8").darkened(nf * 0.5)
-	var wet := Color("#c9a874").darkened(nf * 0.45)
+	var sand := _day_night(_art_c("bank"), nf, Color("#14161f"))
+	var dry := _day_night(_art_c("bank_light"), nf, Color("#1e2028"))
+	var wet := _day_night(_art_c("bank_dark"), nf, Color("#10131c"))
 	var h := view_size.y - bank_top
 	draw_rect(Rect2(0.0, bank_top, bank_w, h + 2.0), sand)
 	_pixel_rect(Rect2(0.0, bank_top - 10.0, bank_w, 14.0), dry)
 	_pixel_rect(Rect2(0.0, bank_top + 4.0, bank_w, 6.0), wet)
-	for i in range(24):
+	for i in range(24 if GameState.quality_level() >= 1 else 14):
 		var sx := fmod(float(i) * 73.0 + 11.0, maxf(1.0, bank_w - 10.0))
 		var sy := bank_top + 18.0 + fmod(float(i) * 41.0, maxf(1.0, h - 30.0))
 		_pixel_rect(Rect2(sx, sy, 3.0, 2.0), dry)
@@ -2216,6 +3334,351 @@ func _draw_island_bank(nf: float) -> void:
 	_pixel_rect(Rect2(bank_w + 14.0, bank_top + 4.0, 4.0, 26.0), GameTheme.WOOD_DARK)
 	PixFont.draw_text_shadowed(self, Vector2(8.0, bank_top - 18.0), "<- DEEP SEA",
 			GameTheme.CREAM, Color("#050a12", 0.6), 2, 1, 1)
+
+
+## Splash droplets and expanding ripple rings at the bobber.
+func _draw_splashes() -> void:
+	for s in splashes:
+		var p: Vector2 = s["pos"]
+		var k := clampf(float(s["life"]) / float(s["max"]), 0.0, 1.0)
+		var strength := float(s["strength"])
+		var a := (1.0 - k) * 0.6 * strength
+		var r := 5.0 + k * 40.0 * strength
+		draw_arc(p, r, 0.0, TAU, 26, Color(0.9, 0.97, 1.0, a), 2.0)
+		draw_arc(p, r * 0.55, 0.0, TAU, 18, Color(0.9, 0.97, 1.0, a * 0.7), 1.5)
+		for d in range(5):
+			var ang := float(d) * TAU / 5.0 + float(s["life"])
+			var dist := 6.0 + k * (26.0 + float(d % 3) * 8.0) * strength
+			var hp := p + Vector2(cos(ang) * dist, sin(ang) * dist * 0.6 - k * 10.0)
+			_pixel_rect(Rect2(hp.x - 2.0, hp.y - 2.0, 4.0, 4.0),
+					Color(0.94, 0.99, 1.0, (1.0 - k) * 0.8))
+
+
+## Ambient particles: fireflies / dragonflies / gulls / mist / spray.
+## Counts are already capped by the quality setting in _update_ambient_particles.
+func _draw_ambient_particles(t: float) -> void:
+	for pa in ambient_particles:
+		var p: Vector2 = pa["pos"]
+		var k := clampf(float(pa["life"]) / float(pa["max"]), 0.0, 1.0)
+		var seed := float(pa["seed"])
+		match String(pa["kind"]):
+			"firefly":
+				var blink := 0.35 + 0.65 * absf(sin(t * 2.4 + seed))
+				draw_circle(p, 3.5, Color(1.0, 0.94, 0.5, 0.10 * blink))
+				_pixel_rect(Rect2(p.x - 1.0, p.y - 1.0, 3.0, 3.0),
+						Color(1.0, 0.95, 0.6, blink * minf(1.0, k * 3.0)))
+			"dragonfly":
+				var flap := sin(t * 26.0 + seed) * 3.0
+				draw_line(p + Vector2(-4.0, flap), p + Vector2(0.0, 0.0), Color(0.75, 0.9, 0.95, 0.55), 1.5)
+				draw_line(p + Vector2(4.0, flap), p + Vector2(0.0, 0.0), Color(0.75, 0.9, 0.95, 0.55), 1.5)
+				_pixel_rect(Rect2(p.x - 1.0, p.y - 1.0, 6.0, 2.0), Color(0.25, 0.42, 0.32, 0.85))
+			"gull":
+				var dir := 1.0 if float((pa["vel"] as Vector2).x) >= 0.0 else -1.0
+				var flap := sin(t * 3.2 + seed) * 5.0
+				draw_line(p, p + Vector2(-12.0 * dir, -flap), Color(0.96, 0.97, 1.0, 0.85), 2.0)
+				draw_line(p, p + Vector2(12.0 * dir, -flap), Color(0.96, 0.97, 1.0, 0.85), 2.0)
+				_pixel_rect(Rect2(p.x - 2.0, p.y - 1.0, 5.0, 3.0), Color(0.96, 0.97, 1.0, 0.9))
+			"mist":
+				var w := 90.0 + seed * 18.0
+				draw_rect(Rect2(p.x - w * 0.5, p.y, w, 7.0), Color(0.9, 0.95, 1.0, 0.055 * k))
+				draw_rect(Rect2(p.x - w * 0.3, p.y - 5.0, w * 0.6, 5.0), Color(0.9, 0.95, 1.0, 0.04 * k))
+			"spray":
+				_pixel_rect(Rect2(p.x - 1.5, p.y - 1.5, 3.0, 3.0), Color(0.94, 0.99, 1.0, k * 0.75))
+			_:
+				pass
+
+
+## Moving water band drawn over the world while a region change fades.
+func _draw_water_wipe() -> void:
+	if water_wipe <= 0.0:
+		return
+	var p := 1.0 - water_wipe
+	var x := -160.0 + p * (view_size.x + 320.0) * 1.1
+	var w := 70.0 + view_size.x * 0.14
+	var c := _art_c("w_surface")
+	var top := water_line * 0.55
+	for i in range(3):
+		var ww := w * (1.0 - float(i) * 0.22)
+		draw_rect(Rect2(x - float(i) * 20.0, top, ww, view_size.y - top),
+				Color(c.r, c.g, c.b, 0.055 * water_wipe))
+	for i in range(8):
+		var y := top + (view_size.y - top) * float(i) / 8.0
+		draw_line(Vector2(x, y), Vector2(x + w * 0.8, y), Color(c.r, c.g, c.b, 0.10 * water_wipe), 2.0)
+
+
+## --- Region set pieces ------------------------------------------------
+## Every prop listed in RegionArt's table for the current place is drawn
+## here. Counts are kept modest so the phone build never pays for art it
+## cannot show at 60fps.
+func _draw_region_props(t: float) -> void:
+	var nf := _night_factor()
+	var q := GameState.quality_level()
+	for prop in art.get("props", []):
+		match String(prop):
+			"lily":
+				_prop_lilies(t, nf, q)
+			"reeds":
+				_prop_reeds(t, nf)
+			"willow":
+				_prop_willows(t, nf)
+			"ducks":
+				_prop_ducks(t, nf)
+			"bridge":
+				_prop_bridge(nf)
+			"rocks":
+				_prop_rocks(t, nf)
+			"whitewater":
+				_prop_whitewater(t)
+			"dock":
+				_prop_dock(nf)
+			"rowboat":
+				_prop_rowboat(t, nf)
+			"island_cabin":
+				_prop_cabin(t, nf)
+			"mist":
+				if q >= 1:
+					_prop_mist(t)
+			"loons":
+				_prop_loons(t, nf)
+			"lighthouse":
+				_prop_lighthouse(t, nf)
+			"gulls":
+				_prop_gulls(t)
+			"sailboat":
+				_prop_sailboat(t, nf)
+			"jetty":
+				_prop_jetty(nf)
+			_:
+				pass
+
+
+## A short plank jetty reaching from the island beach into the lagoon.
+func _prop_jetty(nf: float) -> void:
+	var wood := _art_c("bank_dark", Color("#5b4636")).lerp(Color("#1a2430"), nf * 0.5)
+	var light := _art_c("bank_light", Color("#b08a5f")).lerp(Color("#2a3746"), nf * 0.5)
+	var x0 := bank_w - 10.0
+	var y0 := water_line + 2.0
+	for i in range(7):
+		var px := x0 + float(i) * 14.0
+		var py := y0 + float(i) * 2.5
+		_pixel_rect(Rect2(px, py, 14.0, 7.0), wood)
+		_pixel_rect(Rect2(px, py, 14.0, 2.0), light)
+		if i % 2 == 0:
+			_pixel_rect(Rect2(px + 5.0, py + 7.0, 4.0, 12.0), wood.darkened(0.22))
+
+
+func _prop_lilies(t: float, nf: float, q: int) -> void:
+	var pad := _art_c("tree").lerp(Color("#10261f"), nf * 0.5)
+	var pad_light := pad.lightened(0.16)
+	var n := 9 if q >= 2 else (6 if q >= 1 else 4)
+	var span := maxf(120.0, view_size.x - bank_w - 60.0)
+	for i in range(n):
+		var x := bank_w + 40.0 + fposmod(float(i) * 149.0 + 41.0, span)
+		var y := water_line + 30.0 + fposmod(float(i) * 61.0, maxf(30.0, (view_size.y - water_line) * 0.45))
+		var bob := sin(t * 0.9 + float(i) * 1.3) * 1.5
+		_draw_pixel_circle(Vector2(x, y + bob), 9.0 + float(i % 3) * 2.0, pad, 3.0)
+		_pixel_rect(Rect2(x - 2.0, y + bob - 1.0, 6.0, 2.0), pad.darkened(0.3))
+		_draw_pixel_circle(Vector2(x - 4.0, y + bob - 3.0), 5.0, pad_light, 3.0)
+		if i % 3 == 0:
+			_pixel_rect(Rect2(x - 1.0, y + bob - 8.0, 4.0, 6.0), Color("#f3c1d7"))
+			_pixel_rect(Rect2(x + 1.0, y + bob - 9.0, 2.0, 2.0), Color("#fbe3b0"))
+
+
+func _prop_reeds(t: float, nf: float) -> void:
+	var stem := _art_c("tree_dark").lerp(Color("#1a2a1e"), nf * 0.5)
+	for i in range(14):
+		var side := 0.0 if i % 2 == 0 else 1.0
+		var x := (bank_w - 26.0 + float(i % 4) * 9.0) if side < 0.5 else (view_size.x - 40.0 - float(i % 5) * 8.0)
+		var base_y := water_line + 12.0
+		var h := 26.0 + float(i % 4) * 9.0
+		var sway := sin(t * 1.4 + float(i) * 0.8) * 4.0
+		draw_line(Vector2(x, base_y), Vector2(x + sway, base_y - h), stem, 2.0)
+		_pixel_rect(Rect2(x + sway - 1.0, base_y - h - 5.0, 4.0, 7.0), stem.darkened(0.2))
+
+
+func _prop_willows(t: float, nf: float) -> void:
+	# a couple of big willows framing the bank edge, behind the fisher
+	var c := _art_c("tree").lerp(Color("#0f1a16"), nf * 0.5)
+	var dark := _art_c("tree_dark").lerp(Color("#0a1410"), nf * 0.5)
+	_draw_willow(bank_w - 26.0, bank_top + 4.0, 82.0, c, dark, t)
+	_draw_willow(30.0, bank_top + 4.0, 70.0, c, dark, t)
+
+
+func _prop_ducks(t: float, nf: float) -> void:
+	var body := Color("#c8b48a").lerp(Color("#2a2f34"), nf * 0.6)
+	var head := Color("#3f6b4a").lerp(Color("#20282c"), nf * 0.6)
+	for i in range(2):
+		var x := view_size.x * (0.62 + float(i) * 0.16) + sin(t * 0.5 + float(i) * 2.0) * 18.0
+		var y := water_line + 44.0 + float(i) * 16.0 + sin(t * 1.1 + float(i)) * 2.0
+		_pixel_rect(Rect2(x - 12.0, y - 5.0, 24.0, 7.0), body)
+		_pixel_rect(Rect2(x + 2.0, y - 12.0, 8.0, 8.0), head)
+		_pixel_rect(Rect2(x + 10.0, y - 9.0, 5.0, 3.0), Color("#e8b04a"))
+		_pixel_rect(Rect2(x - 12.0, y + 2.0, 20.0, 2.0), Color(0.85, 0.95, 1.0, 0.16))
+		_pixel_rect(Rect2(x - 16.0, y + 4.0, 8.0, 2.0), Color(0.85, 0.95, 1.0, 0.12))
+
+
+func _prop_bridge(nf: float) -> void:
+	# weathered plank bridge across the current, in the middle distance
+	var x := view_size.x * 0.60
+	var y := water_line + 6.0
+	var wood := GameTheme.WOOD.lerp(Color("#171a22"), nf * 0.6)
+	var dark := GameTheme.WOOD_DARK.lerp(Color("#10131a"), nf * 0.6)
+	_pixel_rect(Rect2(x - 84.0, y, 168.0, 8.0), wood)
+	for i in range(10):
+		_pixel_rect(Rect2(x - 82.0 + float(i) * 17.0, y - 2.0, 14.0, 4.0), dark)
+	_pixel_rect(Rect2(x - 80.0, y - 26.0, 4.0, 28.0), dark)
+	_pixel_rect(Rect2(x + 76.0, y - 26.0, 4.0, 28.0), dark)
+	_pixel_rect(Rect2(x - 80.0, y - 26.0, 160.0, 4.0), wood)
+	for i in range(5):
+		_pixel_rect(Rect2(x - 70.0 + float(i) * 36.0, y - 24.0, 3.0, 24.0), dark.lightened(0.1))
+	# white water churning under the planks
+	for i in range(6):
+		var wx := x - 80.0 + float(i) * 30.0
+		_pixel_rect(Rect2(wx, y + 10.0 + sin(i * 1.7) * 2.0, 18.0, 3.0),
+				Color(0.9, 0.97, 1.0, 0.35))
+
+
+func _prop_rocks(t: float, nf: float) -> void:
+	var rock := _art_c("bank_dark").lerp(Color("#20242b"), nf * 0.4)
+	var light := _art_c("bank_light").lerp(Color("#2c3138"), nf * 0.4)
+	for i in range(7):
+		var x := view_size.x * (0.58 + float(i) * 0.06)
+		var y := water_line + 30.0 + float(i % 3) * 18.0
+		var r := 9.0 + float(i % 3) * 4.0
+		_draw_pixel_circle(Vector2(x, y), r, rock, 3.0)
+		_pixel_rect(Rect2(x - r * 0.4, y - r * 0.7, r * 0.8, 3.0), light)
+
+
+func _prop_whitewater(t: float) -> void:
+	if GameState.quality_level() < 1:
+		return
+	for i in range(10):
+		var x := view_size.x * 0.60 + float(i) * 26.0 - 40.0
+		var y := water_line + 34.0 + float(i % 4) * 15.0 + sin(t * 3.0 + float(i)) * 2.0
+		_pixel_rect(Rect2(x, y, 20.0, 4.0), Color(0.93, 0.99, 1.0, 0.42))
+		_pixel_rect(Rect2(x + 6.0, y - 4.0, 8.0, 3.0), Color(0.93, 0.99, 1.0, 0.30))
+		if GameState.quality_level() >= 2:
+			_pixel_rect(Rect2(x + 14.0, y + 4.0, 6.0, 3.0), Color(1.0, 1.0, 1.0, 0.35))
+
+
+func _prop_dock(nf: float) -> void:
+	# a long wooden dock reaching into the lake
+	var y := water_line + 4.0
+	var x0 := bank_w - 4.0
+	var length := 150.0
+	var wood := GameTheme.WOOD.lerp(Color("#171a22"), nf * 0.6)
+	var dark := GameTheme.WOOD_DARK.lerp(Color("#10131a"), nf * 0.6)
+	_pixel_rect(Rect2(x0, y, length, 7.0), wood)
+	for i in range(9):
+		_pixel_rect(Rect2(x0 + float(i) * 17.0, y - 2.0, 13.0, 4.0), dark)
+	for i in range(4):
+		var px := x0 + 16.0 + float(i) * 40.0
+		_pixel_rect(Rect2(px, y + 5.0, 4.0, 20.0), dark)
+	_pixel_rect(Rect2(x0, y - 12.0, 3.0, 16.0), dark)
+	_pixel_rect(Rect2(x0 + length - 3.0, y - 12.0, 3.0, 16.0), dark)
+	_pixel_rect(Rect2(x0, y - 12.0, length, 3.0), wood)
+
+
+func _prop_rowboat(t: float, nf: float) -> void:
+	var x := bank_w + 120.0
+	var y := _boat_surface_y() + sin(t * 1.3) * 1.5
+	var hull := GameTheme.WOOD.lerp(Color("#1a1d25"), nf * 0.5)
+	var rim := hull.lightened(0.2)
+	_pixel_rect(Rect2(x - 34.0, y - 2.0, 68.0, 7.0), rim)
+	_pixel_rect(Rect2(x - 30.0, y + 4.0, 60.0, 5.0), hull)
+	_pixel_rect(Rect2(x - 36.0, y - 1.0, 6.0, 8.0), hull)
+	_pixel_rect(Rect2(x + 30.0, y - 1.0, 6.0, 8.0), hull)
+	_pixel_rect(Rect2(x - 22.0, y - 3.0, 10.0, 4.0), rim.lightened(0.1))
+	draw_line(Vector2(x + 20.0, y), Vector2(x + 30.0, y - 22.0), Color("#3f3a30"), 2.0)
+
+
+func _prop_cabin(t: float, nf: float) -> void:
+	# forested island on the lake with a smoking cabin
+	var cx := view_size.x * 0.62
+	var base := water_line - 6.0
+	var island := _art_c("tree").lerp(Color("#12201c"), nf * 0.55)
+	_draw_pixel_circle(Vector2(cx, base), 68.0, island.darkened(0.12), 5.0)
+	_draw_pixel_circle(Vector2(cx - 40.0, base), 34.0, island, 5.0)
+	_draw_pixel_circle(Vector2(cx + 44.0, base), 38.0, island.darkened(0.05), 5.0)
+	for i in range(7):
+		var tx := cx - 58.0 + float(i) * 19.0
+		_pixel_rect(Rect2(tx, base - 34.0 - float(i % 3) * 8.0, 5.0, 22.0),
+				_art_c("tree_dark").lerp(Color("#0f1a16"), nf * 0.5))
+	# cabin
+	var cabin := GameTheme.WOOD.lerp(Color("#221f22"), nf * 0.5)
+	_pixel_rect(Rect2(cx - 14.0, base - 24.0, 28.0, 18.0), cabin)
+	_pixel_rect(Rect2(cx - 18.0, base - 30.0, 36.0, 7.0), cabin.darkened(0.25))
+	_pixel_rect(Rect2(cx + 3.0, base - 20.0, 6.0, 6.0), Color("#f2c14e"))
+	# chimney smoke
+	for i in range(5):
+		var sy := base - 38.0 - float(i) * 8.0 + fposmod(t * 6.0, 8.0)
+		var sx := cx + 8.0 + sin(t * 0.8 + float(i)) * (2.0 + float(i) * 1.2)
+		_pixel_rect(Rect2(sx, sy, 5.0 + float(i), 4.0 + float(i)), Color(0.9, 0.92, 0.95, 0.22))
+
+
+func _prop_mist(t: float) -> void:
+	var y := water_line - 4.0
+	for i in range(5):
+		var x := fposmod(float(i) * 211.0 + t * (4.0 + float(i) * 1.5), view_size.x + 260.0) - 130.0
+		_pixel_rect(Rect2(x, y, 200.0 + float(i) * 34.0, 8.0), Color(0.9, 0.95, 1.0, 0.10))
+		_pixel_rect(Rect2(x + 30.0, y - 7.0, 130.0 + float(i) * 20.0, 6.0), Color(0.9, 0.95, 1.0, 0.07))
+
+
+func _prop_loons(t: float, nf: float) -> void:
+	var body := Color("#2b3238").lerp(Color("#141a20"), nf * 0.4)
+	for i in range(2):
+		var x := view_size.x * (0.50 + float(i) * 0.22) + sin(t * 0.4 + float(i) * 2.2) * 20.0
+		var y := water_line + 32.0 + float(i) * 9.0 + sin(t * 1.2 + float(i)) * 1.5
+		_pixel_rect(Rect2(x - 9.0, y - 3.0, 18.0, 5.0), body)
+		_pixel_rect(Rect2(x + 6.0, y - 10.0, 5.0, 8.0), body)
+		_pixel_rect(Rect2(x + 11.0, y - 8.0, 4.0, 2.0), Color("#cfc4a0"))
+		_pixel_rect(Rect2(x - 12.0, y + 3.0, 20.0, 2.0), Color(0.85, 0.95, 1.0, 0.14))
+
+
+func _prop_lighthouse(t: float, nf: float) -> void:
+	var x := bank_w - 86.0
+	var base := bank_top
+	var white := Color("#e8e2d4").lerp(Color("#20242c"), nf * 0.55)
+	var red := Color("#c0453c").lerp(Color("#3a2024"), nf * 0.55)
+	_pixel_rect(Rect2(x - 14.0, base - 96.0, 28.0, 96.0), white)
+	_pixel_rect(Rect2(x - 16.0, base - 8.0, 32.0, 8.0), Color("#4a4d52"))
+	for i in range(3):
+		_pixel_rect(Rect2(x - 14.0, base - 22.0 - float(i) * 26.0, 28.0, 9.0), red)
+	_pixel_rect(Rect2(x - 18.0, base - 104.0, 36.0, 8.0), Color("#3f4248"))
+	_pixel_rect(Rect2(x - 10.0, base - 118.0, 20.0, 14.0), Color("#2f3a44"))
+	if is_night:
+		var glow := Color(1.0, 0.92, 0.55, 0.55 + 0.25 * absf(sin(t * 2.0)))
+		_pixel_rect(Rect2(x - 8.0, base - 116.0, 16.0, 10.0), glow)
+		draw_circle(Vector2(x, base - 111.0), 26.0, Color(1.0, 0.9, 0.5, 0.08))
+		# sweeping beam
+		var ang := sin(t * 0.4) * 0.5
+		var dir := Vector2(cos(ang), sin(ang))
+		draw_line(Vector2(x, base - 111.0), Vector2(x, base - 111.0) + dir * 220.0,
+				Color(1.0, 0.93, 0.6, 0.12), 10.0)
+	else:
+		_pixel_rect(Rect2(x - 8.0, base - 116.0, 16.0, 10.0), Color("#8fb6c8"))
+
+
+func _prop_gulls(t: float) -> void:
+	for i in range(2):
+		var x := view_size.x * (0.30 + float(i) * 0.24) + sin(t * 0.25 + float(i) * 1.8) * 60.0
+		var y := 96.0 + float(i) * 34.0 + sin(t * 1.4 + float(i)) * 6.0
+		var flap := sin(t * 3.0 + float(i)) * 4.0
+		draw_line(Vector2(x - 2.0, y), Vector2(x - 14.0, y - flap), Color(0.97, 0.98, 1.0, 0.75), 2.0)
+		draw_line(Vector2(x - 2.0, y), Vector2(x + 12.0, y - flap), Color(0.97, 0.98, 1.0, 0.75), 2.0)
+
+
+func _prop_sailboat(t: float, nf: float) -> void:
+	var x := view_size.x * 0.80 + sin(t * 0.12) * 30.0
+	var y := water_line - 4.0 + sin(t * 0.7) * 1.0
+	var hull := Color("#3a3f48").lerp(Color("#141820"), nf * 0.5)
+	var sail := Color("#f6ead8").lerp(Color("#6f7686"), nf * 0.5)
+	_pixel_rect(Rect2(x - 18.0, y, 36.0, 5.0), hull)
+	draw_line(Vector2(x, y), Vector2(x, y - 34.0), hull, 2.0)
+	draw_colored_polygon(PackedVector2Array([Vector2(x + 1.0, y - 34.0),
+		Vector2(x + 16.0, y - 6.0), Vector2(x + 1.0, y - 6.0)]), sail)
+	draw_colored_polygon(PackedVector2Array([Vector2(x - 1.0, y - 30.0),
+		Vector2(x - 12.0, y - 6.0), Vector2(x - 1.0, y - 6.0)]), sail.darkened(0.08))
 
 
 func _draw_palms(t: float) -> void:
@@ -2523,7 +3986,7 @@ func _draw_reel_meter() -> void:
 	var w := 420.0
 	var h := 48.0
 	var x := (view_size.x - w) * 0.5
-	var y := view_size.y - 84.0
+	var y := view_size.y - 96.0
 	_ui_panel(Rect2(x, y, w, h), Color("#141c2c", 0.85), Color("#3b4a63", 0.95))
 	var bar_x := x + 16.0
 	var bar_w := w - 32.0
@@ -2533,42 +3996,51 @@ func _draw_reel_meter() -> void:
 		var band := _tug_band()
 		_pixel_rect(Rect2(bar_x + bar_w * (0.5 - band), bar_y, bar_w * band * 2.0, 12.0), GameTheme.LEAF)
 		_pixel_rect(Rect2(bar_x + bar_w * reel_tension - 2.0, bar_y - 5.0, 4.0, 22.0), GameTheme.CREAM)
-		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), "TENSION - HOLD TO REEL IN - KEEP IT GREEN",
+		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), "HOLD TO REEL - KEEP IT GREEN",
 				Color("#cfe0ec"), Color("#050a12", 0.6), 2, 1, 1)
 	else:
-		var window := _timing_window()
-		var good := window * TIMING_ACCEPT
-		_pixel_rect(Rect2(bar_x + bar_w * (0.5 - good), bar_y, bar_w * good * 2.0, 12.0), GameTheme.LEAF)
-		_pixel_rect(Rect2(bar_x + bar_w * 0.5 - 1.5, bar_y, 3.0, 12.0), GameTheme.GOLD)
+		var good := _green_half()
+		_pixel_rect(Rect2(bar_x + bar_w * (timing_center - good), bar_y, bar_w * good * 2.0, 12.0),
+				GameTheme.LEAF)
+		_pixel_rect(Rect2(bar_x + bar_w * timing_center - 1.5, bar_y, 3.0, 12.0), GameTheme.GOLD)
 		_pixel_rect(Rect2(bar_x + bar_w * reel_pos - 2.0, bar_y - 5.0, 4.0, 22.0), GameTheme.CREAM)
-		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), "REEL - CENTER = PERFECT BONUS",
+		var hint := "HIT THE GREEN - PERFECT BONUS"
+		if _rod_tier_rank() >= 2:
+			hint = "THE GREEN MOVES - HIT IT"
+		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), hint,
 				Color("#cfe0ec"), Color("#050a12", 0.6), 2, 1, 1)
 
 
 func _draw_hud() -> void:
 	_hud_panel("COINS %d" % GameState.coins, true)
-	var area_label := "OPEN WATER" if open_water else String(FishDB.REGION_DISPLAY.get(region, region))
+	var area_label := "OPEN WATER" if open_water else RegionArt.display(region)
 	var rt := "%s  %s  %s" % [area_label.to_upper(),
 			"NIGHT" if is_night else "DAY", _weather_label()]
 	var left_r: Rect2 = _hud_panel("BUCKET %d/%d" % [GameState.inventory_count(), GameState.bucket_capacity()], false)
-	PixFont.draw_text_shadowed(self, Vector2(12.0, 54.0), rt,
+	RegionArt.draw_glyph(self, String(art.get("glyph", "pond")),
+			Vector2(16.0, 68.0), 15.0, GameTheme.CREAM)
+	PixFont.draw_text_shadowed(self, Vector2(30.0, 54.0), rt,
 			Color("#e9d8a8"), Color("#050a12", 0.6), 2, 1, 1)
 	var forecast := "NEXT %s IN %ds" % [_weather_name(weather_next), maxi(0, int(ceil(weather_timer)))]
-	PixFont.draw_text_shadowed(self, Vector2(12.0, 72.0), forecast,
+	PixFont.draw_text_shadowed(self, Vector2(12.0, 82.0), forecast,
 			Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
 	var daily_id := GameState.daily_fish_id()
 	if daily_id != "":
 		var daily_txt := "DAILY: %s x2" % fish_name(daily_id).to_upper()
-		PixFont.draw_text_shadowed(self, Vector2(12.0, 90.0), daily_txt,
+		PixFont.draw_text_shadowed(self, Vector2(12.0, 100.0), daily_txt,
 				GameTheme.GOLD, Color("#050a12", 0.6), 2, 1, 1)
-	if is_island:
-		PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 96.0),
-				"G AXE - E OR CLICK CHOP - WALK WEST TO SAIL HOME",
-				Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
-	else:
-		PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 96.0),
-				"SPOTS 1-4 - R ROD - B BOAT - I INDEX - ESC PAUSE",
-				Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
+	var touch := touch_controls != null and touch_controls.enabled
+	# On touch the bottom hint already explains the controls and the left
+	# column belongs to the on-screen buttons, so skip the keyboard line.
+	if not touch:
+		if is_island:
+			PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 120.0),
+					"G AXE - E OR CLICK CHOP - WALK WEST TO SAIL HOME",
+					Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
+		else:
+			PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 120.0),
+					"SPOTS 1-4 - R ROD - B BOAT - I INDEX - ESC PAUSE",
+					Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
 	var boat_txt := "BOAT: %s" % String(GameState.current_boat().get("name", "Old Raft")).to_upper()
 	PixFont.draw_text_shadowed(self,
 			Vector2(view_size.x - PixFont.text_width(boat_txt, 2) - 12.0, 52.0),
@@ -2586,28 +4058,46 @@ func _draw_hud() -> void:
 				streak_txt, GameTheme.LEAF, Color("#050a12", 0.6), 2, 1, 1)
 
 	_draw_event_banner(12.0)
+	_draw_arrival()
+	_draw_reticle()
+	_draw_saved_toast()
 
-	if msg_text != "":
+	if msg_text != "" and state != STATE_REEL:
 		var txt := msg_text
-		var tw := PixFont.text_width(txt, 3)
+		var ps := 3
+		while ps > 1 and PixFont.text_width(txt, ps) > view_size.x - 60.0:
+			ps -= 1
+		var tw := PixFont.text_width(txt, ps)
 		var mx := (view_size.x - tw) * 0.5
 		var my := view_size.y - 150.0
 		_ui_panel(Rect2(mx - 14.0, my - 8.0, tw + 28.0, 30.0), Color("#141c2c", 0.72), Color("#3b4a63", 0.8))
 		PixFont.draw_text_shadowed(self, Vector2(mx, my), txt, GameTheme.CREAM,
-				Color("#050a12", 0.65), 3, 1, 1)
+				Color("#050a12", 0.65), ps, 1, 1)
 
 	if state == STATE_WORLD:
 		var hint := "A/D WALK - AIM WITH MOUSE - SPACE OR CLICK TO CAST - I INDEX - B BOAT"
+		if touch:
+			hint = "STICK TO WALK - TAP TO CAST - TAP INDEX FOR YOUR FISH"
 		if is_island:
 			hint = "G AXE - E CHOP - WALK WEST TO SAIL HOME - ESC FOR THE SHOP"
+			if touch:
+				hint = "AXE AND CHOP BUTTONS - STICK LEFT TO SAIL HOME - MENU FOR SHOP"
 		elif open_water:
 			hint = "OPEN WATER - A/D SAIL - SPACE OR CLICK TO CAST - SAIL WEST TO RETURN"
+			if touch:
+				hint = "STICK TO SAIL - TAP TO CAST - SAIL WEST TO RETURN"
 		elif in_boat:
 			hint = "A/D SAIL - AIM WITH MOUSE - SPACE OR CLICK TO CAST - B TO LAND"
+			if touch:
+				hint = "STICK TO SAIL - TAP TO CAST - BOAT TO LAND"
 			if region == "ocean":
 				hint = "SAIL EAST TO COCONUT ISLE - SPACE TO CAST - B TO LAND"
+				if touch:
+					hint = "STICK RIGHT TO REACH COCONUT ISLE - TAP TO CAST"
 		elif not rod_out:
 			hint = "ROD AWAY - PRESS R TO TAKE IT OUT - B TO BOARD YOUR BOAT"
+			if touch:
+				hint = "TAP ROD TO READY IT - TAP BOAT TO BOARD"
 		var hw := PixFont.text_width(hint, 2)
 		PixFont.draw_text_shadowed(self, Vector2((view_size.x - hw) * 0.5, view_size.y - 26.0), hint,
 				Color("#c8d6e2"), Color("#050a12", 0.6), 2, 1, 1)
@@ -2629,17 +4119,113 @@ func _draw_event_banner(y: float) -> void:
 func _bait_hud_text() -> String:
 	var bait_id := String(GameState.gear.get("bait", ""))
 	if bait_id == "":
-		return "NO BAIT - RARE FISH BARELY BITE - BUY BAIT IN THE SHOP"
+		return "NO BAIT - BUY BAIT FOR RARE FISH"
 	return "BAIT: %s x%d" % [String(ShopDB.item("baits", bait_id).get("name", "Bait")).to_upper(),
 			GameState.bait_count(bait_id)]
 
 
+## "THE RIVER - FAST CURRENT, SHARP ROCKS": announced like a place,
+## not a menu change, with a small glyph and a slow fade.
+func _draw_arrival() -> void:
+	if arrival_t <= 0.0:
+		return
+	var fade_in := clampf((4.5 - arrival_t) / 0.35, 0.0, 1.0)
+	var fade_out := clampf(arrival_t / 0.7, 0.0, 1.0)
+	var a := fade_in * fade_out
+	if a <= 0.01:
+		return
+	var name_w := PixFont.text_width(arrival_name, 4)
+	var sub_w := PixFont.text_width(arrival_sub, 2)
+	var w := maxf(name_w, sub_w) + 92.0
+	var x := (view_size.x - w) * 0.5
+	# Keep the banner above the fisher and rod tip, not across the action.
+	var y := clampf(water_line - 190.0, 112.0, 190.0)
+	var gold := Color(GameTheme.GOLD.r, GameTheme.GOLD.g, GameTheme.GOLD.b, a)
+	_ui_panel(Rect2(x, y, w, 74.0), Color(0.08, 0.11, 0.17, 0.84 * a), gold, 3.0)
+	RegionArt.draw_glyph(self, arrival_glyph, Vector2(x + 32.0, y + 37.0), 34.0, gold)
+	PixFont.draw_text_shadowed(self, Vector2(x + 58.0, y + 12.0), arrival_name, gold,
+			Color(0.02, 0.03, 0.05, 0.7 * a), 4, 1, 1)
+	PixFont.draw_text_shadowed(self, Vector2(x + 58.0, y + 46.0), arrival_sub,
+			Color(0.86, 0.9, 0.94, a), Color(0.02, 0.03, 0.05, 0.6 * a), 2, 1, 1)
+
+
+func _draw_coin_fly() -> void:
+	for c in coin_fly:
+		if float(c["delay"]) > 0.0:
+			continue
+		var p: Vector2 = c["pos"]
+		_draw_pixel_circle(p, 6.0, GameTheme.GOLD, 3.0)
+		_pixel_rect(Rect2(p.x - 2.0, p.y - 2.0, 4.0, 4.0), Color("#fff2cf"))
+
+
+func _draw_saved_toast() -> void:
+	if saved_toast_t <= 0.0:
+		return
+	var a := minf(1.0, saved_toast_t / 0.4)
+	var txt := "SAVED"
+	var w := PixFont.text_width(txt, 2) + 34.0
+	var x := (view_size.x - w) * 0.5
+	var y := 46.0
+	_ui_panel(Rect2(x, y, w, 26.0), Color(0.08, 0.11, 0.17, 0.8 * a),
+			Color(GameTheme.LEAF.r, GameTheme.LEAF.g, GameTheme.LEAF.b, a), 2.0)
+	PixFont.draw_text_centered(self, x + w * 0.5, y + 5.0, txt,
+			Color(0.86, 0.95, 0.84, a), 2, 1)
+
+
+## Aim crosshair at the cast target while playing with touch controls.
+func _draw_reticle() -> void:
+	if touch_controls == null or not touch_controls.enabled:
+		return
+	if state != STATE_WORLD and state != STATE_CAST:
+		return
+	if not rod_out or axe_out:
+		return
+	var t := Time.get_ticks_msec() / 1000.0
+	var p := cast_target
+	var a := 0.45 + 0.25 * absf(sin(t * 3.0))
+	var c := Color(1.0, 0.95, 0.82, a)
+	draw_arc(p, 13.0, 0.0, TAU, 22, c, 2.0)
+	draw_line(p + Vector2(-18.0, 0.0), p + Vector2(-8.0, 0.0), c, 2.0)
+	draw_line(p + Vector2(8.0, 0.0), p + Vector2(18.0, 0.0), c, 2.0)
+	draw_line(p + Vector2(0.0, 8.0), p + Vector2(0.0, 18.0), c, 2.0)
+	_pixel_rect(Rect2(p.x - 2.0, p.y - 2.0, 4.0, 4.0), c)
+
+
+## Simple centred word wrap for the catch card description.
+func _draw_wrapped_centered(center_x: float, y: float, text: String, color: Color,
+		ps: int, max_w: float, max_lines: int) -> void:
+	var words := text.split(" ", false)
+	var lines: Array[String] = []
+	var current := ""
+	for w in words:
+		var trial := String(w) if current == "" else current + " " + String(w)
+		if PixFont.text_width(trial, ps) <= max_w:
+			current = trial
+		else:
+			if current != "":
+				lines.append(current)
+			current = String(w)
+		if lines.size() >= max_lines:
+			break
+	if lines.size() < max_lines and current != "":
+		lines.append(current)
+	var yy := y
+	for line in lines:
+		PixFont.draw_text_centered(self, center_x, yy, line, color, ps, 1)
+		yy += float(8 * ps + 4)
+
+
 func _draw_menu() -> void:
 	draw_rect(Rect2(0.0, 0.0, view_size.x, view_size.y), Color("#0b1320", 0.62))
+	var sc := _menu_scale()
+	var vw := view_size.x / sc
+	var vh := view_size.y / sc
 	var pw := 520.0
 	var ph := MENU_PANEL_H
-	var px := (view_size.x - pw) * 0.5
-	var py := (view_size.y - ph) * 0.5
+	var px := (vw - pw) * 0.5
+	var py := (vh - ph) * 0.5
+	_draw_event_banner(maxf(10.0, py * sc - 36.0))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2(sc, sc))
 	_ui_panel(Rect2(px, py, pw, ph), Color("#1d2536", 0.96), GameTheme.CREAM)
 
 	var t1 := "COTTAGE CREEK"
@@ -2650,12 +4236,13 @@ func _draw_menu() -> void:
 	var sw := PixFont.text_width(sub, 2)
 	PixFont.draw_text_shadowed(self, Vector2(px + (pw - sw) * 0.5, py + 126.0), sub,
 			Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
-	_draw_event_banner(maxf(10.0, py - 36.0))
 
 	menu_buttons = _menu_button_rects()
 	for i in range(menu_buttons.size()):
 		var b := menu_buttons[i] as Dictionary
-		var r := b["rect"] as Rect2
+		# menu_buttons are screen-space hit rects; the draw transform is
+		# already scaled, so convert back to the 520x480 sheet here.
+		var r := Rect2((b["rect"] as Rect2).position / sc, (b["rect"] as Rect2).size / sc)
 		var hovered: bool = i == hover_button
 		var is_new: bool = String(b["id"]) == "updates" and ChangelogLib.is_unseen()
 		var fill := Color("#3c4a63") if hovered else Color("#2b3648")
@@ -2678,21 +4265,29 @@ func _draw_menu() -> void:
 	# gets its own line under the start-screen panel
 	if msg_text != "":
 		var mw := PixFont.text_width(msg_text, 2)
-		PixFont.draw_text_shadowed(self, Vector2(px + (pw - mw) * 0.5, py + ph + 20.0), msg_text,
+		PixFont.draw_text_shadowed(self, Vector2(px + (pw - mw) * 0.5, py + ph + 12.0), msg_text,
 				GameTheme.GOLD, Color("#050a12", 0.75), 2, 1, 1)
+	draw_set_transform(Vector2.ZERO)
 
 
 func _draw_catch_popup() -> void:
 	draw_rect(Rect2(0.0, 0.0, view_size.x, view_size.y), Color("#0b1320", 0.55))
 	var pw := 440.0
-	var ph := 310.0
+	var ph := 330.0
 	var px := (view_size.x - pw) * 0.5
 	var py := (view_size.y - ph) * 0.5
+	# the card scales in with a little overshoot so a catch lands with juice
+	var tc := clampf(catch_card_t, 0.0, 1.0)
+	var sc := 1.0 + 2.70158 * pow(tc - 1.0, 3.0) + 1.70158 * pow(tc - 1.0, 2.0)
+	var center := Vector2(px + pw * 0.5, py + ph * 0.5)
+	draw_set_transform(center - center * sc, 0.0, Vector2(sc, sc))
 	_ui_panel(Rect2(px, py, pw, ph), GameTheme.PAPER, GameTheme.INK, 5.0)
 
 	var name_val := fish_name(catch_fish_id).to_upper()
-	var nw := PixFont.text_width(name_val, 4)
-	PixFont.draw_text_centered(self, px + pw * 0.5, py + 24.0, name_val, GameTheme.INK, 4, 1)
+	var nps := 4
+	while nps > 2 and PixFont.text_width(name_val, nps) > pw - 28.0:
+		nps -= 1
+	PixFont.draw_text_centered(self, px + pw * 0.5, py + 24.0, name_val, GameTheme.INK, nps, 1)
 
 	var rarity_color := GameTheme.get_rarity_color(catch_rarity)
 	var rw := PixFont.text_width(catch_rarity.to_upper(), 3)
@@ -2702,12 +4297,9 @@ func _draw_catch_popup() -> void:
 			Color("#18202c"), 3, 1)
 
 	if catch_new:
-		var nw2 := PixFont.text_width("NEW SPECIES!", 3)
-		var nx := px + pw * 0.5 + nw2 * 0.5 + 14.0
-		PixFont.draw_text_shadowed(self, Vector2(nx, py + 70.0), "NEW SPECIES!", GameTheme.GOLD,
-				Color("#050a12", 0.35), 3, 1, 1)
-
-	FishArt.draw_fish(self, Rect2(px + 90.0, py + 104.0, pw - 180.0, 74.0),
+		PixFont.draw_text_centered(self, px + pw * 0.5, py + 96.0, "NEW SPECIES!",
+				GameTheme.GOLD, 2, 1)
+	FishArt.draw_fish(self, Rect2(px + 90.0, py + 110.0, pw - 180.0, 84.0),
 			FishDB.fish_data(catch_fish_id), false, 1.0)
 
 	var tags: Array[String] = []
@@ -2720,20 +4312,24 @@ func _draw_catch_popup() -> void:
 	if GameState.event_active():
 		tags.append("2X EVENT")
 	if not tags.is_empty():
-		PixFont.draw_text_centered(self, px + pw * 0.5, py + 178.0, "   ".join(tags),
-				GameTheme.GOLD, 2, 1)
+		var tag_line := "   ".join(tags)
+		var tps := 2
+		if PixFont.text_width(tag_line, tps) > pw - 30.0:
+			tps = 1
+		PixFont.draw_text_centered(self, px + pw * 0.5, py + 198.0, tag_line,
+				GameTheme.GOLD, tps, 1)
 
-	var w_txt := "WEIGHT %.2f KG   WORTH %d COINS - SELL IT" % [catch_weight, catch_coins]
-	PixFont.draw_text_centered(self, px + pw * 0.5, py + 200.0, w_txt, GameTheme.WOOD_DARK, 3, 1)
+	var w_txt := "%.2f KG   WORTH %d COINS" % [catch_weight, catch_coins]
+	PixFont.draw_text_centered(self, px + pw * 0.5, py + 216.0, w_txt, GameTheme.WOOD_DARK, 2, 1)
 
 	var f := FishDB.fish_data(catch_fish_id)
 	var d_txt := String(f.get("desc", ""))
-	var dw := PixFont.text_width(d_txt, 2)
-	PixFont.draw_text_centered(self, px + pw * 0.5, py + 234.0, d_txt, Color("#5a4a55"), 2, 1)
+	_draw_wrapped_centered(px + pw * 0.5, py + 238.0, d_txt, Color("#5a4a55"), 2, pw - 40.0, 2)
 
-	var br := Rect2(px + pw * 0.5 - 110.0, py + 256.0, 220.0, 40.0)
+	var br := Rect2(px + pw * 0.5 - 110.0, py + 272.0, 220.0, 36.0)
 	var bh: bool = br.has_point(mouse_pos)
 	_ui_panel(br, GameTheme.LEAF if bh else Color("#5c8a52"), GameTheme.INK, 3.0)
 	var lab := "KEEP FISHING"
 	var lw := PixFont.text_width(lab, 3)
-	PixFont.draw_text_centered(self, px + pw * 0.5, py + 262.0, lab, GameTheme.CREAM, 3, 1)
+	PixFont.draw_text_centered(self, px + pw * 0.5, py + 277.0, lab, GameTheme.CREAM, 3, 1)
+	draw_set_transform(Vector2.ZERO)

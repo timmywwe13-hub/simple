@@ -7,13 +7,13 @@ static var RODS := {
 	"rod_stick": {"id": "rod_stick", "name": "Twig Rod", "cost": 0,
 		"reel_speed": 1.0, "timing_window": 0.18, "desc": "A bent stick. Slow reeling.", "owned": true},
 	"rod_wood": {"id": "rod_wood", "name": "Willow Rod", "cost": 150,
-		"reel_speed": 1.4, "timing_window": 0.22, "desc": "Smoother flex, wider window.", "owned": false},
+		"reel_speed": 1.4, "timing_window": 0.22, "desc": "Smoother flex and a faster reel, but a tighter target.", "owned": false},
 	"rod_bamboo": {"id": "rod_bamboo", "name": "Bamboo Rod", "cost": 500,
-		"reel_speed": 1.9, "timing_window": 0.28, "desc": "Quick and responsive.", "owned": false},
+		"reel_speed": 1.9, "timing_window": 0.28, "desc": "Quick reel and a small target that shifts each pass.", "owned": false},
 	"rod_fiber": {"id": "rod_fiber", "name": "Reed Rod", "cost": 1200,
-		"reel_speed": 2.5, "timing_window": 0.36, "desc": "Nearly effortless reeling.", "owned": false},
+		"reel_speed": 2.5, "timing_window": 0.36, "desc": "Very fast reel. The green target moves every pass.", "owned": false},
 	"rod_carbon": {"id": "rod_carbon", "name": "Carbon Rod", "cost": 2600,
-		"reel_speed": 3.2, "timing_window": 0.42, "desc": "Tournament blank. Huge green zone.", "owned": false},
+		"reel_speed": 3.2, "timing_window": 0.42, "desc": "Tournament blank: fastest reel, smallest moving target.", "owned": false},
 }
 
 ## Island-crafted rods: exactly 25% better than the shop rod they are
@@ -159,6 +159,16 @@ static func mark_owned_rods(ids: Array) -> void:
 			RODS[id]["owned"] = true
 		elif CRAFTED_RODS.has(id):
 			CRAFTED_RODS[id]["owned"] = true
+
+static func reset_owned() -> void:
+	for db in [RODS, CRAFTED_RODS, LINES, BUCKETS, LANTERNS, BOATS]:
+		for id in db.keys():
+			db[id]["owned"] = false
+	RODS["rod_stick"]["owned"] = true
+	LINES["line_nylon"]["owned"] = true
+	BUCKETS["bucket_small"]["owned"] = true
+	LANTERNS["lantern_none"]["owned"] = true
+	BOATS["boat_raft"]["owned"] = true
 
 static func _db(category: String) -> Dictionary:
 	match category:

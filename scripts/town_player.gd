@@ -44,6 +44,7 @@ func _physics_process(dt: float) -> void:
 	var dir := Vector2(
 			Input.get_action_strength("move_right") - Input.get_action_strength("move_left"),
 			Input.get_action_strength("move_down") - Input.get_action_strength("move_up"))
+	dir += GameState.touch_vector
 	if dir.length() > 1.0:
 		dir = dir.normalized()
 	if dir.length() < 0.15 or not can_move:

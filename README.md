@@ -37,14 +37,20 @@ godot --headless --path . --export-release Web build/web/index.html
 | Open the Fish Index | `I` (from the menu or right on the water) |
 | Pause / back | `Escape` (pauses while fishing; closes menus) |
 | Stats and sound | menu button `STATS & SOUND` |
+| Settings | menu or pause button `SETTINGS`, or `F11` for fullscreen |
 | What's New / patch notes | menu or pause button `WHAT'S NEW`, `U` in Town |
+| Cycle fishing spots (gamepad) | shoulder buttons |
+| Everything else (gamepad) | left stick / D-pad, `A`/`X`, `B` to pause/back |
 | Quit | close window |
 
-**On touchscreens** (phones/tablets) an on-screen pad and buttons appear:
-move with the left thumb, tap the water to aim and cast, and use the big
-button to cast / hook / reel / hold tension (its label changes with the
-situation). The small buttons cover rod, boat, spots `1`–`4`, index and
-menu, and multi-touch works.
+**On touchscreens** (phones/tablets) the game switches to a thumb-stick and
+context buttons: an analog stick with a dead zone for walking and sailing,
+tap the water to aim, and a large action button that becomes CAST / HOOK /
+REEL / HOLD / CHOP. Only the buttons you need right now stay on screen
+(rod, boat, axe, spots `1`–`4`, index and menu), sized for thumbs and inset for notches and rounded corners. Multi-touch works: walk with the
+left thumb while fishing with the right. Set **TOUCH UI** to `ON` to use the
+controls on a desktop, or `OFF` to hide them on a tablet; `AUTO` follows the
+device.
 
 ## Gameplay loop
 
@@ -53,13 +59,32 @@ menu, and multi-touch works.
 3. **Reel** — small fish: timing bar (press in the green zone; the gold centre is a perfect catch for +15%). Big fish: physics tug-of-war (hold `SPACE` to reel in and keep the tension marker in the green band).
 4. **Catch popup** — fish name, weight, rarity, coin value, plus a `NEW SPECIES!` badge on first catch and tags for perfect / daily / hot-demand bonuses.
 5. **Sell / Index** — open the Fish Index (`I`, also mid-fishing: collection log with silhouettes until caught, plus region and uncaught filters) or the Tackle Shop (sell all fish for coins).
-6. **Upgrade** — buy better rods (faster reeling, wider timing window), lines (fewer escapes), bait (attracts rarer fish), lanterns (faster night bites), and bigger buckets (more inventory).
+6. **Upgrade** — buy better rods (faster reeling, but the green target shrinks and starts moving each pass), lines (fewer escapes), bait (attracts rarer fish), lanterns (faster night bites), and bigger buckets (more inventory).
 7. **Progress** — unlock the River, Lake, and Deep Sea regions by coins; each has its own fish table. Day/night, weather, daily catches and daily market demand change which fish are worth chasing.
 8. **Coconut Isle** — sail east from the Deep Sea to a tropical beach. Buy the axe in the shop, chop the palms for coconuts (each palm regrows in 20 minutes, with a timer over the stump), then spend the coconuts in **Coconut Isle Crafting** to build rods 25% better than every shop rod. The isle's own fish only bite with bait.
 
+## Settings
+
+Open **SETTINGS** from the start menu or the pause menu:
+
+- **Music / SFX** volume sliders (separate audio buses). The mute button still works independently.
+- **Fullscreen** toggle, also `F11`; the choice is restored on the next launch.
+- **Reduce motion** — disables screen shake, hurt flashes and lightning strobes while keeping the sounds.
+- **Touch UI** — `AUTO` (show on touch devices), `ON`, or `OFF`.
+- **Quality** — `AUTO`, `LOW`, `MEDIUM` or `HIGH`; controls ambient fish, particles, mist and spray.
+- **Reset progress** — two clicks to confirm; keeps your settings but clears coins, fish, gear and unlocks.
+
+Settings are saved with your progress and old saves pick up the defaults.
+
 ## Save system
 
-Progress (coins, inventory, fish index, gear, unlocked regions, quests) auto-saves to `user://save.json` and resumes on restart.
+Progress (coins, inventory, fish index, gear, unlocked regions, quests,
+settings) auto-saves to `user://save.json` and resumes on restart. Saves
+are debounced (at most once a second) and written atomically: a temp file
+with a checksum, then the old save is kept as `save.bak`. A corrupt or
+truncated save falls back to the backup instead of wiping progress, and
+travel/quit/focus-loss flush immediately. In the browser, `user://` lives
+in IndexedDB.
 
 ## Project structure
 
@@ -70,10 +95,23 @@ res://scripts/GameState.gd # Save/load, inventory, index, gear, quests, audio SF
 res://scripts/FishDB.gd  # All fish data + regional tables
 res://scripts/ShopDB.gd  # Rods / lines / baits / buckets data
 res://scripts/GameTheme.gd # Cottagecore color palette + rarity tiers
+res://scripts/region_art.gd # Per-place palettes, props, music/ambience keys
 res://scripts/ui_lib.gd  # Tiny code-only UI toolkit
 res://scripts/touch_controls.gd # On-screen touch controls for phones/tablets
 res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 ```
+
+## Updates (v1.7)
+
+- **Every place looks like itself** - each region has its own sky, water, banks, treeline and set pieces, and the palette crossfades over ~0.8s when you change spots. The Pond has lilies, reeds, willows, ducks and dragonflies; the River has current streaks, a gravel bar, birches, a plank bridge and white water; the Lake has a dock, rowboat, island cabin with chimney smoke, mist and loons; the Deep Sea has swells, a stone quay, lighthouse, gulls and a sailboat. Spot changes show an arrival banner with the place's name and tagline
+- **Settings** - music/SFX sliders, fullscreen (`F11`), reduce motion, touch UI Auto/On/Off, quality and a confirmed reset progress, from the menu or pause menu. Saved with your game; old saves gain the defaults
+- **Save safety** - atomic temp-file writes with a checksum, a `.bak` fallback when the main save is corrupt, debounced autosave (once a second max) and an on-screen `SAVED` toast. Travel, quit and focus-loss flush immediately, so a browser tab close no longer loses a catch
+- **Rod timing** - higher rods reel faster but the green target is smaller and jumps to a new spot every pass, so holding a click on one spot no longer works. The shop now shows `PRECISION: 0-4` per rod
+- **Touch overhaul** - analog thumb-stick, safe-area insets, large touch targets, context-only buttons, a portrait rotate overlay, touch HUD hints and an aim reticle. The small buttons no longer cover the water while you fish
+- **Fish Index 2.0** - pick any species (hover, click, tap or arrow keys) for a detail pane with art, rarity, description, where/when it bites, personal best, catch count and per-region completion
+- **Fish art polish** - tapered, shaded bodies with a lighter belly and dorsal sheen, flared forked tails, fin rays, gills, lateral lines, glinting eyes and cleaner pattern work. Bills, whiskers and streamers fit inside the card, and tails are no longer hidden behind the body
+- **Juice and audio** - splash rings at the bobber, coins that fly to the HUD on a sale, a catch card that scales in, scene fades on travel, region ambience (fireflies, gulls, spray, loons) and procedural music that crossfades per place and time of day
+- **Distribution** - Windows and Android presets, and the web build is an installable PWA with icons, an offline page and a landscape orientation
 
 ## Updates (v1.6)
 
@@ -158,6 +196,20 @@ res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 - **Save/load** — `user://save.json`.
 - **Progression goals** — region completion %, quests (First Catch, Rare Find, Collector).
 - **Polish** — idle bobber bob, water ripple particles, day/night cycle, bite `!` indicator, screen-shake/flash on rare catches, procedural WebAudio beep SFX, cottagecore color palette, all art drawn procedurally (no external assets).
+
+## Desktop, mobile and web builds
+
+`export_presets.cfg` contains three presets:
+
+- **Web** - outputs to `build/web/` (PWA enabled: manifest, icons, service worker and offline page).
+- **Windows Desktop** - `build/windows/CottageCreekFishing.exe` (requires the Windows export templates).
+- **Android** - `build/android/CottageCreekFishing.apk` (requires the Android SDK, the Android export templates, and a release keystore in the Godot editor's Android settings).
+
+```bash
+godot --headless --path . --export-release Web build/web/index.html
+godot --headless --path . --export-release "Windows Desktop" build/windows/CottageCreekFishing.exe
+godot --headless --path . --export-release Android build/android/CottageCreekFishing.apk
+```
 
 ## Web deploy (GitHub Pages + Netlify only)
 

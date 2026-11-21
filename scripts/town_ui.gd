@@ -37,11 +37,15 @@ static func screen(layer: Node, title: String, card := Vector2(760.0, 470.0)) ->
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(dim)
 	var panel := Control.new()
-	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.position = -card * 0.5
 	panel.custom_minimum_size = card
 	panel.size = card
 	root.add_child(panel)
+	# Fit the card on small windows (landscape phones / 640x360) instead of
+	# drawing its title and close hint off-screen.
+	var vp := layer.get_viewport().get_visible_rect().size
+	var sc := clampf(minf((vp.x - 24.0) / card.x, (vp.y - 24.0) / card.y), 0.45, 1.0)
+	panel.scale = Vector2(sc, sc)
+	panel.position = (vp - card * sc) * 0.5
 	frame(panel, Rect2(Vector2.ZERO, card), UILib.PANEL, UILib.CREAM, 4.0)
 	var t := UILib.label(panel, title, 26, UILib.GOLD, true, HORIZONTAL_ALIGNMENT_LEFT)
 	t.position = Vector2(24.0, 18.0)

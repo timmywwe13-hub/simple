@@ -39,8 +39,13 @@ var updates_prev := false
 var digit_prev := {}
 
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		GameState.flush_save()
+		get_tree().quit()
+
+
 func _ready() -> void:
-	GameState._load_game()
 	view_size = get_viewport_rect().size
 	ground_y = view_size.y * 0.78
 	get_viewport().size_changed.connect(_relayout)
@@ -145,6 +150,10 @@ func _spawn_tunnel() -> void:
 
 func _process(dt: float) -> void:
 	_track_cheat_digits()
+	if touch != null:
+		touch.sync_settings()
+	GameState.set_music("town", false)
+	GameState.set_ambience_region("town", false)
 	# U opens the patch notes from anywhere in town (not while typing a code
 	# or a panel is already open).
 	var u_now := Input.is_physical_key_pressed(KEY_U)
@@ -335,6 +344,8 @@ func _draw_hud() -> void:
 	_hud_line("COINS %d" % GameState.coins, 12.0, 12.0, GameTheme.GOLD)
 	_hud_line("BUCKET %d/%d" % [GameState.inventory_count(), GameState.bucket_capacity()], 12.0, 40.0, UILib.CREAM)
 	var hint := "WASD / ARROWS - WALK    E - INTERACT    U - WHAT'S NEW    ESC - CLOSE"
+	if touch != null and touch.enabled:
+		hint = "DRAG THE STICK TO WALK - TAP TALK NEAR A BUILDING - CLOSE TO LEAVE A SHOP"
 	PixFont.draw_text_shadowed(self, Vector2((view_size.x - PixFont.text_width(hint, 2)) * 0.5, view_size.y - 24.0),
 			hint, Color("#c8d6e2"), Color("#050a12", 0.6), 2, 1, 1)
 

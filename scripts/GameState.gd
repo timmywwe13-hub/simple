@@ -45,8 +45,63 @@ var session_started := false
 
 var audio_player: AudioStreamPlayer
 var sfx_cache := {}
+## Set by touch_controls.gd every frame; town_player reads it for analog
+## thumb-stick movement without needing a reference to the control node.
+var touch_vector := Vector2.ZERO
+
+## --- Settings (v1.7) -------------------------------------------------
+## Persisted player preferences. Merged over the defaults on load so any
+## save written before a setting existed still gains a sane value.
+const DEFAULT_SETTINGS := {
+	"music": 0.7,
+	"sfx": 0.8,
+	"fullscreen": false,
+	"reduce_motion": false,
+	"quality": "auto",
+	"touch_ui": "auto",
+}
+var settings: Dictionary = DEFAULT_SETTINGS.duplicate(true)
+
+## --- Save safety -----------------------------------------------------
+## save_version lets future builds migrate old saves. Writes go to a
+## temp file first and the previous save is kept as a .bak, so a crash
+## mid-write can never leave an unreadable save behind (IndexedDB on the
+## web build is the risky one).
+const SAVE_VERSION := 1
+const SAVE_MAGIC := "CCF2"
+const SAVE_DEBOUNCE := 1.0
+var save_version := SAVE_VERSION
+var _save_pending := false
+var _save_timer := 0.0
+var _saved_toast_cd := 0.0
+
+signal saved
+signal coins_gained(amount: int)
+
+## --- Audio director (v1.7) ------------------------------------------
+## Two music players crossfade between procedurally baked loops, one per
+## region + time of day. Ambience one-shots are baked on demand and share
+## the SFX player.
+const BUS_MUSIC := "Music"
+const BUS_SFX := "SFX"
+var music_players: Array[AudioStreamPlayer] = []
+var music_cache := {}
+var music_key := ""
+var _music_slot := 0
+var _music_target_db: Array[float] = [-60.0, -60.0]
+var _ambience_timer := 9.0
+var _amb_region := "pond"
+var _amb_night := false
+
+## --- Scene fade ------------------------------------------------------
+var fade_layer: CanvasLayer
+var fade_rect: ColorRect
+var fade_alpha := 0.0
+var fade_target := 0.0
+var fade_scene := ""
 
 var SAVE_PATH := "user://save.json"
+var BACKUP_PATH := "user://save.bak"
 var AUTO_SAVE := true
 
 ## Quest definitions. "kind" is the event that advances it, "target" the
@@ -280,21 +335,259 @@ func cheat_digit(digit: int) -> bool:
 
 
 func _process(dt: float) -> void:
+	_tick_save(dt)
+	_tick_fade(dt)
+	_tick_ambience(dt)
+	_tick_music(dt)
 	if cheat_timer <= 0.0:
 		return
 	cheat_timer = maxf(0.0, cheat_timer - dt)
 	if cheat_timer == 0.0:
 		cheat_buffer = ""
 
+func _tick_save(dt: float) -> void:
+	if _saved_toast_cd > 0.0:
+		_saved_toast_cd = maxf(0.0, _saved_toast_cd - dt)
+	if not _save_pending:
+		return
+	_save_timer -= dt
+	if _save_timer <= 0.0:
+		flush_save()
+
+func _tick_fade(dt: float) -> void:
+	if fade_rect == null:
+		return
+	if fade_alpha < fade_target:
+		fade_alpha = minf(1.0, fade_alpha + dt * 4.0)
+		if fade_alpha >= 1.0 and fade_scene != "":
+			var path := fade_scene
+			fade_scene = ""
+			fade_target = 0.0
+			get_tree().call_deferred("change_scene_to_file", path)
+	elif fade_alpha > fade_target:
+		fade_alpha = maxf(0.0, fade_alpha - dt * 3.2)
+	fade_rect.color = Color(0.04, 0.07, 0.11, fade_alpha)
+	fade_rect.visible = fade_alpha > 0.001
+
+func _build_fade() -> void:
+	fade_layer = CanvasLayer.new()
+	fade_layer.name = "SceneFade"
+	fade_layer.layer = 100
+	add_child(fade_layer)
+	fade_rect = ColorRect.new()
+	fade_rect.color = Color(0.04, 0.07, 0.11, 0.0)
+	fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fade_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	fade_rect.visible = false
+	fade_layer.add_child(fade_rect)
+
+## Region ambience: a random one-shot every few seconds (frogs, current,
+## loons, gulls, spray) so each place has its own background sound.
+const AMBIENCE := {
+	"pond": ["frog", "lily"],
+	"river": ["current", "splash"],
+	"lake": ["loon", "splash"],
+	"ocean": ["gull", "spray"],
+	"open": ["gull", "spray"],
+	"island": ["frog", "gull"],
+	"town": ["bird"],
+}
+
+func set_ambience_region(region_name: String, night: bool) -> void:
+	_amb_region = region_name
+	_amb_night = night
+
+func _tick_ambience(dt: float) -> void:
+	if muted or audio_player == null:
+		return
+	_ambience_timer -= dt
+	if _ambience_timer > 0.0:
+		return
+	_ambience_timer = randf_range(6.0, 15.0)
+	var pool: Array = AMBIENCE.get(_amb_region, [])
+	if pool.is_empty():
+		return
+	var pick := String(pool[randi() % pool.size()])
+	if _amb_night and (pick == "gull" or pick == "bird"):
+		pick = "frog" if _amb_region != "ocean" and _amb_region != "open" else "spray"
+	play_sound("amb_" + pick)
+
+## --- Audio director ---------------------------------------------------
+func _ensure_buses() -> void:
+	for bus_name in [BUS_MUSIC, BUS_SFX]:
+		if AudioServer.get_bus_index(bus_name) != -1:
+			continue
+		AudioServer.add_bus()
+		var idx := AudioServer.bus_count - 1
+		AudioServer.set_bus_name(idx, bus_name)
+		AudioServer.set_bus_send(idx, "Master")
+	_apply_audio_settings()
+
+func _apply_audio_settings() -> void:
+	if AudioServer.get_bus_index(BUS_MUSIC) == -1:
+		return
+	AudioServer.set_bus_mute(0, muted)
+	AudioServer.set_bus_volume_db(AudioServer.get_bus_index(BUS_MUSIC),
+			linear_to_db(maxf(0.0001, float(settings.get("music", 0.7)))))
+	AudioServer.set_bus_volume_db(AudioServer.get_bus_index(BUS_SFX),
+			linear_to_db(maxf(0.0001, float(settings.get("sfx", 0.8)))))
+
+## Pick the loop for a place + time of day. Called every frame by the
+## scenes; it is a string compare unless the key actually changed.
+func set_music(region_name: String, night: bool) -> void:
+	# the headless test harness has no audio device; skip baking/playing
+	if DisplayServer.get_name() == "headless":
+		return
+	var key := _music_region_key(region_name)
+	key += "_night" if night else "_day"
+	if key == music_key:
+		return
+	music_key = key
+	if music_players.is_empty():
+		return
+	var stream: AudioStreamWAV = music_cache.get(key)
+	if stream == null:
+		stream = _bake_music(key)
+		music_cache[key] = stream
+	_crossfade_music(stream)
+
+func _music_region_key(region_name: String) -> String:
+	match region_name:
+		"open": return "sea"
+		"ocean": return "sea"
+		"island": return "island"
+		"town": return "town"
+		"river": return "river"
+		"lake": return "lake"
+		_: return "pond"
+
+## Manual crossfade (no tween): both players glide to their target volume
+## in _tick_music, and the old one stops once it is silent. Avoiding a
+## Tween here also avoids holding playback references across a quit.
+func _crossfade_music(stream: AudioStreamWAV) -> void:
+	var old_slot := _music_slot
+	_music_slot = (_music_slot + 1) % music_players.size()
+	var fresh: AudioStreamPlayer = music_players[_music_slot]
+	fresh.stream = stream
+	fresh.volume_db = -60.0
+	fresh.play(0.0)
+	_music_target_db[_music_slot] = -7.0
+	_music_target_db[old_slot] = -60.0
+
+
+func _tick_music(dt: float) -> void:
+	for i in range(music_players.size()):
+		var p: AudioStreamPlayer = music_players[i]
+		if not p.playing:
+			continue
+		p.volume_db = move_toward(p.volume_db, _music_target_db[i], dt * 58.0)
+		if _music_target_db[i] <= -59.9 and p.volume_db <= -59.9:
+			p.stop()
+			p.stream = null
+
+func stop_music() -> void:
+	music_key = ""
+	for i in range(music_players.size()):
+		music_players[i].stop()
+		music_players[i].stream = null
+		_music_target_db[i] = -60.0
+
+## Short looping beds, one per region and time of day. Kept simple and
+## quiet: a few stacked sines on a slow arpeggio. Baked once per key.
+func _bake_music(key: String) -> AudioStreamWAV:
+	var night := key.ends_with("_night")
+	var base_key := key.trim_suffix("_night").trim_suffix("_day")
+	var root := 220.0
+	match base_key:
+		"river": root = 196.0
+		"lake": root = 174.6
+		"sea": root = 146.8
+		"island": root = 261.6
+		"town": root = 246.9
+	var scale := [1.0, 1.2, 1.5, 1.8, 2.0]
+	if base_key == "sea":
+		scale = [1.0, 1.125, 1.5, 1.687, 2.0]
+	var rate := 16000
+	var dur := 4.0
+	var frames := int(dur * float(rate))
+	var bytes := PackedByteArray()
+	bytes.resize(frames * 2)
+	var step := 1.0 / float(rate)
+	var beat := 0.5 if not night else 0.85
+	for i in range(frames):
+		var t := float(i) * step
+		var n := int(t / beat) % scale.size()
+		var n2 := int(t / (beat * 2.0)) % scale.size()
+		var f1 := root * float(scale[n])
+		var f2 := root * float(scale[n2]) * 0.5
+		var fade := minf(1.0, t / 0.6) * minf(1.0, (dur - t) / 0.6)
+		var s := sin(TAU * f1 * t) * 0.16
+		s += sin(TAU * f2 * t) * 0.12
+		s += sin(TAU * root * 0.5 * t) * 0.10
+		s += sin(TAU * f1 * 2.0 * t) * 0.03
+		s *= (0.55 if night else 0.7) * fade
+		bytes.encode_s16(i * 2, int(clampf(s, -1.0, 1.0) * 32767.0))
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = rate
+	wav.stereo = false
+	wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	wav.loop_begin = 0
+	wav.loop_end = frames
+	wav.data = bytes
+	return wav
+
 
 func _ready() -> void:
 	if event_until <= 0:
 		event_until = int(Time.get_unix_time_from_system()) + EVENT_SECONDS
+	_build_fade()
 	_load_game()
+	_ensure_buses()
 	_setup_audio()
+	apply_display_settings()
 
-func save_game() -> void:
-	var data := {
+## Flush on focus loss, app pause (mobile) and window close so no
+## progress is ever lost to the browser tab being killed.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED \
+			or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		flush_save()
+
+
+## Stop and release the audio streams on shutdown so the engine does not
+## report leaked playback objects when the window closes.
+func _exit_tree() -> void:
+	for p in music_players:
+		if is_instance_valid(p):
+			p.stop()
+			p.stream = null
+	music_players.clear()
+	music_cache.clear()
+	if audio_player != null and is_instance_valid(audio_player):
+		audio_player.stop()
+		audio_player.stream = null
+	sfx_cache.clear()
+
+## --- Save API --------------------------------------------------------
+## Debounced save: at most one disk write per SAVE_DEBOUNCE second, and a
+## pending write is never starved by more requests.
+func request_save() -> void:
+	if not AUTO_SAVE:
+		return
+	_save_pending = true
+	if _save_timer <= 0.0:
+		_save_timer = SAVE_DEBOUNCE
+
+func flush_save() -> void:
+	_save_timer = 0.0
+	if _save_pending:
+		save_game()
+
+func _save_data() -> Dictionary:
+	return {
+		"save_version": save_version,
+		"settings": settings.duplicate(true),
 		"coins": coins,
 		"seen_version": seen_version,
 		"event_until": event_until,
@@ -314,29 +607,96 @@ func save_game() -> void:
 		"chopped_palms": chopped_palms,
 		"owned_rods": ShopDB.owned_rod_ids(),
 	}
-	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
-	if file:
-		file.store_var(data)
+
+## Write through a temp file, park the previous save as a .bak, then swap
+## the new one in. A failed rename falls back to a copy on platforms (some
+## browsers) that refuse to rename user:// files.
+func save_game() -> void:
+	var tmp_path := SAVE_PATH + ".tmp"
+	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
+	if file == null:
+		push_warning("Could not open the save file for writing")
+		return
+	# A tiny checksum header means a truncated/corrupt save is rejected
+	# *before* the binary Variant decoder can spew engine errors, and the
+	# loader can fall back to the .bak cleanly.
+	var payload := var_to_bytes(_save_data())
+	var header := "%s %d %d\n" % [SAVE_MAGIC, payload.size(), hash(payload)]
+	file.store_buffer(header.to_utf8_buffer())
+	file.store_buffer(payload)
+	file.flush()
+	file.close()
+	if FileAccess.file_exists(SAVE_PATH):
+		if FileAccess.file_exists(BACKUP_PATH):
+			DirAccess.remove_absolute(BACKUP_PATH)
+		if DirAccess.rename_absolute(SAVE_PATH, BACKUP_PATH) != OK:
+			# some browsers refuse renames - copy the old save aside instead
+			if DirAccess.copy_absolute(SAVE_PATH, BACKUP_PATH) == OK:
+				DirAccess.remove_absolute(SAVE_PATH)
+	var err := DirAccess.rename_absolute(tmp_path, SAVE_PATH)
+	if err != OK:
+		DirAccess.copy_absolute(tmp_path, SAVE_PATH)
+		DirAccess.remove_absolute(tmp_path)
+	_save_pending = false
+	_save_timer = 0.0
+	if _saved_toast_cd <= 0.0:
+		_saved_toast_cd = 6.0
+		saved.emit()
+
+func _read_save(path: String) -> Dictionary:
+	if not FileAccess.file_exists(path):
+		return {}
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {}
+	var header := file.get_line()
+	if header.begins_with(SAVE_MAGIC + " "):
+		var parts := header.split(" ")
+		if parts.size() != 3:
+			file.close()
+			return {}
+		var length := int(parts[1])
+		var crc := int(parts[2])
+		var payload := file.get_buffer(length)
 		file.close()
+		if payload.size() != length or hash(payload) != crc:
+			return {}
+		var data: Variant = bytes_to_var(payload)
+		if typeof(data) != TYPE_DICTIONARY:
+			return {}
+		return data
+	# legacy (v1.6 and older) raw store_var save - no header. Check the
+	# binary Variant type byte first so random corruption never reaches
+	# the decoder (which prints engine errors on garbage input).
+	file.seek(0)
+	var peek := file.get_buffer(8)
+	if peek.size() < 8 or int(peek[4]) != int(TYPE_DICTIONARY):
+		file.close()
+		return {}
+	file.seek(0)
+	var legacy: Variant = file.get_var()
+	file.close()
+	if typeof(legacy) != TYPE_DICTIONARY:
+		return {}
+	return legacy
 
 func _load_game() -> void:
 	# A brand new save (or a save from before the event existed) starts its
 	# own 12 hour window. An already-expired timestamp is kept as expired.
 	if event_until <= 0:
 		event_until = int(Time.get_unix_time_from_system()) + EVENT_SECONDS
-	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
-	if not file:
+	var data := _read_save(SAVE_PATH)
+	if data.is_empty():
+		# a damaged main save falls back to the previous good one
+		data = _read_save(BACKUP_PATH)
+	if data.is_empty():
+		_apply_saved_settings({})
 		_init_index()
 		quests = _merge_quests([])
 		save_game()
 		return
-	var data: Dictionary = file.get_var()
-	file.close()
-	if typeof(data) != TYPE_DICTIONARY:
-		_init_index()
-		quests = _merge_quests([])
-		save_game()
-		return
+	save_version = maxi(SAVE_VERSION, int(data.get("save_version", 0)))
+	_apply_saved_settings(data.get("settings", {}))
 	coins = int(data.get("coins", 50))
 	seen_version = String(data.get("seen_version", ""))
 	# Old saves have no event timestamp yet - give them the full window and
@@ -377,7 +737,100 @@ func _load_game() -> void:
 	quests = _merge_quests(data.get("quests", []))
 	_init_index()
 	if new_event:
-		save_game()
+		request_save()
+
+## Merge saved preferences over the defaults. Anything missing (a save
+## from before v1.7) silently gains the default value.
+func _apply_saved_settings(saved: Variant) -> void:
+	settings = DEFAULT_SETTINGS.duplicate(true)
+	if typeof(saved) == TYPE_DICTIONARY:
+		for k in DEFAULT_SETTINGS.keys():
+			if saved.has(k):
+				settings[k] = saved[k]
+	settings["music"] = clampf(float(settings.get("music", 0.7)), 0.0, 1.0)
+	settings["sfx"] = clampf(float(settings.get("sfx", 0.8)), 0.0, 1.0)
+	settings["fullscreen"] = bool(settings.get("fullscreen", false))
+	settings["reduce_motion"] = bool(settings.get("reduce_motion", false))
+	var q := String(settings.get("quality", "auto"))
+	if not ["auto", "low", "medium", "high"].has(q):
+		q = "auto"
+	settings["quality"] = q
+	var t := String(settings.get("touch_ui", "auto"))
+	if not ["auto", "on", "off"].has(t):
+		t = "auto"
+	settings["touch_ui"] = t
+
+## Single entry point for the settings screen and F11. Persists and applies.
+func set_setting(key: String, value: Variant) -> void:
+	if not settings.has(key):
+		return
+	settings[key] = value
+	_apply_audio_settings()
+	if key == "fullscreen":
+		apply_display_settings()
+	request_save()
+
+func reduce_motion() -> bool:
+	return bool(settings.get("reduce_motion", false))
+
+## 0 = low, 1 = medium, 2 = high. "auto" is conservative on phones and
+## on mobile browsers, where the frame budget is tightest.
+func quality_level() -> int:
+	match String(settings.get("quality", "auto")):
+		"low": return 0
+		"medium": return 1
+		"high": return 2
+	var mobile := OS.has_feature("mobile") or OS.has_feature("web_android") \
+			or OS.has_feature("web_ios")
+	return 1 if mobile else 2
+
+func touch_ui_mode() -> String:
+	return String(settings.get("touch_ui", "auto"))
+
+func apply_display_settings() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	var want_full := bool(settings.get("fullscreen", false))
+	var mode := DisplayServer.window_get_mode()
+	var is_full := mode == DisplayServer.WINDOW_MODE_FULLSCREEN \
+			or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+	if want_full and not is_full:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+	elif not want_full and is_full:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+
+func toggle_fullscreen() -> void:
+	set_setting("fullscreen", not bool(settings.get("fullscreen", false)))
+
+## Wipe progress (settings are kept) after parking the old save in the
+## pre-cheat backup slot, so a reset is never completely destructive.
+func reset_progress() -> void:
+	backup_save()
+	coins = 50
+	inventory = []
+	index = {}
+	gear = {"rod": "rod_stick", "line": "line_nylon", "bait": "", "bucket": "bucket_small",
+		"boat": "boat_raft", "lantern": "lantern_none"}
+	owned_boats = ["boat_raft"]
+	unlocked_regions = ["pond", "island"]
+	bait_counts = {}
+	total_caught = 0
+	stats = {
+		"coins_earned": 0, "fish_sold": 0, "perfect_catches": 0,
+		"current_streak": 0, "best_streak": 0, "daily_catches": 0,
+		"biggest_fish": 0.0, "biggest_name": "", "days_fished": 0,
+	}
+	has_axe = false
+	axe_level = 1
+	coconuts = 0
+	chopped_palms = {}
+	seen_version = ""
+	event_until = int(Time.get_unix_time_from_system()) + EVENT_SECONDS
+	ShopDB.reset_owned()
+	quests = _merge_quests([])
+	_init_index()
+	session_started = false
+	save_game()
 
 ## Build the live quest list from QUEST_DEFS, carrying progress / done /
 ## claimed over from the saved list (old saves gain the new quests).
@@ -465,7 +918,7 @@ func record_catch(fish_id: String, weight: float, region: String, night := false
 	_check_quests("catch", fish_id, {"region": region, "weight": weight, "night": night,
 			"weather": weather, "perfect": perfect, "streak": int(stats["current_streak"])})
 	if AUTO_SAVE:
-		save_game()
+		request_save()
 
 ## A fish is worth its FishDB "coin" base scaled by how big the catch is
 ## inside the species' own weight range (85%..130% of base). Weight is
@@ -485,8 +938,9 @@ func coin_value(fish_id: String, weight: float) -> int:
 func add_coins(amount: int) -> void:
 	coins += amount
 	play_sound("coin")
+	coins_gained.emit(amount)
 	if AUTO_SAVE:
-		save_game()
+		request_save()
 
 ## --- Daily rotation -------------------------------------------------
 ## A real-world date key so the daily catch and hot market species change
@@ -549,10 +1003,15 @@ func reset_streak() -> void:
 ## Persisted mute switch. Muted sounds are skipped entirely (no queued clip).
 func set_muted(value: bool) -> void:
 	muted = value
-	if muted and audio_player != null:
-		audio_player.stop()
+	if muted:
+		for p in music_players:
+			p.stop()
+		music_key = ""
+		if audio_player != null:
+			audio_player.stop()
+	_apply_audio_settings()
 	if AUTO_SAVE:
-		save_game()
+		request_save()
 
 func toggle_mute() -> bool:
 	set_muted(not muted)
@@ -676,16 +1135,17 @@ func quest_unclaimed_count() -> int:
 			n += 1
 	return n
 
-## Scene-to-scene travel (tunnels). The save is flushed and the scene swap
-## is deferred to idle time so it is safe from _process and physics
-## callbacks (an immediate swap frees this scene mid-callback).
+## Scene-to-scene travel (tunnels). The save is flushed and the screen
+## fades to black, swaps scenes, then fades back in. The scene change is
+## deferred to idle time so it is safe from _process and physics callbacks.
 func travel(scene_path: String) -> void:
 	play_sound("ui")
 	if scene_path.is_empty():
 		return
 	session_started = true
-	save_game()
-	get_tree().call_deferred("change_scene_to_file", scene_path)
+	flush_save()
+	fade_target = 1.0
+	fade_scene = scene_path
 
 func inventory_count() -> int:
 	return inventory.size()
@@ -776,6 +1236,8 @@ func activate_bait(bait_id: String) -> void:
 
 ## Use one charge of the equipped bait for the cast that is starting.
 ## Returns the bait id used ("" when fishing bare - rare fish hate that).
+## Deliberately debounced: a save per cast is an IndexedDB write per cast
+## on the web/mobile build, which stutters the browser.
 func consume_bait() -> String:
 	var id := String(gear.get("bait", ""))
 	if id == "":
@@ -786,7 +1248,7 @@ func consume_bait() -> String:
 	bait_counts[id] = bait_count(id) - 1
 	_check_quests("use_bait", "")
 	if AUTO_SAVE:
-		save_game()
+		request_save()
 	return id
 
 ## Unequip bait once the bag runs dry.
@@ -874,7 +1336,15 @@ func _check_quests(kind: String, fish_id: String, data: Dictionary = {}) -> void
 func _setup_audio() -> void:
 	audio_player = AudioStreamPlayer.new()
 	audio_player.autoplay = false
+	audio_player.bus = BUS_SFX
 	add_child(audio_player)
+	for i in range(2):
+		var p := AudioStreamPlayer.new()
+		p.autoplay = false
+		p.bus = BUS_MUSIC
+		p.volume_db = -60.0
+		add_child(p)
+		music_players.append(p)
 
 func play_sound(sfx_name: String) -> void:
 	if audio_player == null or muted:
@@ -901,6 +1371,15 @@ func _bake_sfx(sfx_name: String) -> AudioStreamWAV:
 		"buzz": [150.0, 0.30, 0.18, 2],
 		"shock": [190.0, 0.40, 0.32, 2],
 		"thunder": [58.0, 1.10, 0.34, 2],
+		# ambience one-shots (played by the region ambience timer)
+		"amb_frog": [110.0, 0.22, 0.16, 4],
+		"amb_lily": [1500.0, 0.08, 0.07, 0],
+		"amb_current": [70.0, 0.60, 0.10, 3],
+		"amb_splash": [300.0, 0.20, 0.10, 3],
+		"amb_loon": [420.0, 0.90, 0.16, 4],
+		"amb_gull": [900.0, 0.35, 0.10, 4],
+		"amb_spray": [180.0, 0.40, 0.08, 3],
+		"amb_bird": [1200.0, 0.12, 0.07, 4],
 	}
 	var t: Array = sfx.get(sfx_name, [])
 	if t.size() == 0:
@@ -914,16 +1393,26 @@ func _bake_sfx(sfx_name: String) -> AudioStreamWAV:
 	bytes.resize(frames * 2)
 	var phase := 0.0
 	var step := freq * 2.0 * PI / 44100.0
+	var noise := 0.0
 	for i in range(frames):
 		var tpos := float(i) / float(frames)
 		var env := 1.0 - tpos * 0.7
 		var sample := 0.0
-		if wave == 0:
-			sample = sin(phase)
-		elif wave == 1:
-			sample = 1.0 if sin(phase) > 0 else -1.0
-		else:
-			sample = 1.0 if sin(phase * 3.0) > 0 else -1.0
+		match wave:
+			0:
+				sample = sin(phase)
+			1:
+				sample = 1.0 if sin(phase) > 0 else -1.0
+			2:
+				sample = 1.0 if sin(phase * 3.0) > 0 else -1.0
+			3:
+				# cheap noise: smooth a random walk for water textures
+				noise = noise * 0.82 + randf_range(-1.0, 1.0) * 0.18
+				sample = noise * 1.6
+			4:
+				# two-tone call (frog / loon / gull), pitch slides down
+				var slide := 1.0 - tpos * 0.35
+				sample = sin(phase * slide) * (0.6 + 0.4 * sin(tpos * TAU * 2.0))
 		phase += step
 		sample *= vol * env * 0.5
 		bytes.encode_s16(i * 2, int(clampf(sample, -1.0, 1.0) * 32767.0))
