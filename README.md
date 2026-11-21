@@ -159,54 +159,42 @@ res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 - **Progression goals** — region completion %, quests (First Catch, Rare Find, Collector).
 - **Polish** — idle bobber bob, water ripple particles, day/night cycle, bite `!` indicator, screen-shake/flash on rare catches, procedural WebAudio beep SFX, cottagecore color palette, all art drawn procedurally (no external assets).
 
-## Web export (Netlify)
+## Web deploy (GitHub Pages + Netlify only)
 
-Build the web version (Godot 4.7.x with Web export templates installed):
+The browser build lives in **`build/web/`** and is committed to the repo. That
+folder is the only artifact either host serves — there is no other hosting
+config, Worker, or backend.
 
-```
+Rebuild it after changing scripts, scenes, or assets:
+
+```bash
+./scripts/export-web.sh
+# or, on any machine with Godot 4.7.x + Web export templates:
 godot --headless --path . --export-release Web build/web/index.html
 ```
 
-This produces the static site in `build/web/` (already built in this repo). To deploy on Netlify:
+The script also copies the favicon (`fishing.svg`) and keeps Netlify's
+`_headers` file in place. Commit `build/web/` with your change.
 
-- **Fastest:** drag-and-drop the `build/web` folder onto <https://app.netlify.com/drop>.
-- **CLI:** `npx netlify-cli deploy --dir=build/web --prod` (picks up `netlify.toml`).
-- **Git:** connect the repo in Netlify; `netlify.toml` publishes `build/web` (commit the folder after rebuilding).
+### GitHub Pages
 
-Saves work in the browser via `user://` (persisted in IndexedDB), so no backend is needed.
+The repo root `index.html` redirects to `build/web/`, and `.nojekyll` keeps
+GitHub from filtering the export. Pages serves whatever is committed, so:
 
-## Web deploy (Cloudflare Workers)
-
-Cloudflare Workers static assets (and Pages) reject any single file over **25 MiB**,
-and Godot's release `index.wasm` is ~38 MiB, so it cannot be uploaded as one
-asset. The repo works around that:
-
-- `scripts/cf-build.sh` copies `build/web/` to `dist/` and splits `index.wasm`
-  into `index.wasm.part0..N` (~16 MiB each) plus `index.wasm.parts.json`.
-- `worker/index.js` answers `/index.wasm` by streaming those parts back in order
-  as a single `application/wasm` response; every other path goes straight to
-  static assets.
-- `wrangler.jsonc` points `assets.directory` at `dist/`, wires the Worker, and
-  runs the build script through `build.command`.
-
-Deploy from the Cloudflare dashboard (GitHub-connected Worker):
-
-1. **Settings → Build**: Deploy command `npx wrangler deploy`, Build command
-   empty (wrangler runs `scripts/cf-build.sh` itself). Root directory = repo root.
-2. If the Worker is named something other than `simple`, set `name` in
-   `wrangler.jsonc` to match.
-3. Commit the rebuilt `build/web/` with your changes — CI deploys the committed
-   export, it does not run Godot.
-
-Locally:
-
-```
-bash ./scripts/cf-build.sh   # assemble dist/
-npx wrangler dev             # http://127.0.0.1:8787
+```bash
+git add -A && git commit -m "Rebuild web export" && git push
 ```
 
-Notes: game content lives in `index.pck`, so normal updates only change that
-~1.6 MiB file — the wasm parts change only when you upgrade Godot's web export
-templates. Do **not** try to ship the wasm gzipped with a `Content-Encoding`
-header: Cloudflare's edge compresses Worker responses itself, which yields a
-double-encoded body that fails to instantiate.
+Live at <https://timmywwe13-hub.github.io/simple/build/web/>.
+
+### Netlify
+
+`netlify.toml` publishes `build/web` and sets no-cache headers for the wasm,
+pck, js, and index.html so players get a fresh build after a deploy.
+
+- **Fastest:** drag the `build/web` folder onto <https://app.netlify.com/drop>.
+- **CLI:** `npx netlify-cli deploy --dir=build/web --prod`.
+- **Git:** connect the repo in Netlify; it publishes `build/web` on every push.
+
+Saves work in the browser via `user://` (persisted in IndexedDB), so no
+database, account system, or server is needed.
