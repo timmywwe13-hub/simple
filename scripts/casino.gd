@@ -11,8 +11,10 @@ extends Interactable
 
 const CasinoDBLib := preload("res://scripts/casino_db.gd")
 
-## The reel is drawn as three copies of its twelve stops. Two copies pass
-## under the pointer during a spin, and the result lands in the last copy.
+## The reel is drawn as three copies of its twelve stops so the strip can
+## fill the window on both sides of the pointer. The first copy passes
+## during a spin; the result lands in the middle copy and the last copy
+## supplies the cells to its right.
 const REEL_CELL_W := 124.0
 const REEL_WINDOW_W := 620.0
 const REEL_LOOPS := 2
@@ -253,11 +255,7 @@ func _build_reel() -> void:
 	pointer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	reel_window.add_child(pointer)
 	pointer.draw.connect(_draw_reel_pointer.bind(pointer))
-	reel_strip.position = Vector2(_reel_center_x(), 0.0)
-
-
-func _reel_center_x() -> float:
-	return (REEL_WINDOW_W - REEL_CELL_W) * 0.5
+	reel_strip.position = Vector2.ZERO
 
 
 func _draw_reel_pointer(pointer: Control) -> void:
@@ -350,10 +348,9 @@ func _animate_reel(stop_index: int) -> void:
 		await get_tree().create_timer(0.10).timeout
 		return
 	var stops := CasinoDBLib.reel_stops()
-	var target_index := stop_index + REEL_LOOPS * stops.size()
-	var start := _reel_center_x()
-	var target := start - float(target_index) * REEL_CELL_W
-	reel_strip.position = Vector2(start, 0.0)
+	var target_index := stop_index + stops.size()
+	var target := REEL_WINDOW_W * 0.5 - (float(target_index) + 0.5) * REEL_CELL_W
+	reel_strip.position = Vector2.ZERO
 	if GameState.reduce_motion():
 		reel_strip.position.x = target
 		await get_tree().create_timer(0.12).timeout
