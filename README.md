@@ -39,6 +39,7 @@ godot --headless --path . --export-release Web build/web/index.html
 | Stats and sound | menu button `STATS & SOUND` |
 | Settings | menu or pause button `SETTINGS`, or `F11` for fullscreen |
 | What's New / patch notes | menu or pause button `WHAT'S NEW`, `U` in Town |
+| Play the Lucky Lily (Town) | walk to the riverboat and press `E` |
 | Cycle fishing spots (gamepad) | shoulder buttons |
 | Everything else (gamepad) | left stick / D-pad, `A`/`X`, `B` to pause/back |
 | Quit | close window |
@@ -62,6 +63,9 @@ device.
 6. **Upgrade** — buy better rods (faster reeling, but the green target shrinks and starts moving each pass), lines (fewer escapes), bait (attracts rarer fish), lanterns (faster night bites), and bigger buckets (more inventory).
 7. **Progress** — unlock the River, Lake, and Deep Sea regions by coins; each has its own fish table. Day/night, weather, daily catches and daily market demand change which fish are worth chasing.
 8. **Coconut Isle** — sail east from the Deep Sea to a tropical beach. Buy the axe in the shop, chop the palms for coconuts (each palm regrows in 20 minutes, with a timer over the stump), then spend the coconuts in **Coconut Isle Crafting** to build rods 25% better than every shop rod. The isle's own fish only bite with bait.
+9. **The Lucky Lily** — walk to the toy-coin riverboat in Town and press `E`. Pick a stake from 10 to 500 coins, then call **Skipper's Coin**, pick a **Pearl Shell**, or spin the **Lucky Catch** reel. Every payout includes the returned stake; the ledger tracks your session and lifetime results.
+
+**Gambling is toy-coins only.** The Lucky Lily never takes real money, never sells chips and cannot be topped up with a purchase. Its fixed odds carry a house edge, and casino coins are kept separate from fish sales and the 2X coin event.
 
 ## Settings
 
@@ -79,7 +83,7 @@ Settings are saved with your progress and old saves pick up the defaults.
 ## Save system
 
 Progress (coins, inventory, fish index, gear, unlocked regions, quests,
-settings) auto-saves to `user://save.json` and resumes on restart. Saves
+settings, and the selected Lucky Lily stake) auto-saves to `user://save.json` and resumes on restart. Saves
 are debounced (at most once a second) and written atomically: a temp file
 with a checksum, then the old save is kept as `save.bak`. A corrupt or
 truncated save falls back to the backup instead of wiping progress, and
@@ -92,6 +96,8 @@ in IndexedDB.
 res://main.tscn          # Main scene (Node2D)
 res://scripts/main.gd    # Game loop: cast/bite/reel, rendering, UI screens
 res://scripts/GameState.gd # Save/load, inventory, index, gear, quests, audio SFX
+res://scripts/casino_db.gd # Lucky Lily fixed odds, payouts and reel stops
+res://scripts/casino.gd    # Lucky Lily riverboat art and toy-coin panel
 res://scripts/FishDB.gd  # All fish data + regional tables
 res://scripts/ShopDB.gd  # Rods / lines / baits / buckets data
 res://scripts/GameTheme.gd # Cottagecore color palette + rarity tiers
@@ -100,6 +106,13 @@ res://scripts/ui_lib.gd  # Tiny code-only UI toolkit
 res://scripts/touch_controls.gd # On-screen touch controls for phones/tablets
 res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 ```
+
+## Updates (v1.8)
+
+- **The Lucky Lily** - a toy-coin riverboat in Town with three games: Skipper's Coin (48% pays 2X), Pearl Shells (30% pays 3X) and the 12-stop Lucky Catch reel (5% jackpot at 5X). Stakes of 10, 25, 50, 100, 250 or 500 coins, a persistent selected stake, short reveals that can be skipped with Reduce Motion, and a ledger for session and lifetime wagered/returned/net/biggest win
+- **Toy coins only** - no real money, no chip purchases and no top-ups. Casino payouts bypass the 2X coin event and never count as fish sales, so the only way in is coins earned by fishing
+- **Two new quests** - win any wager for **Lucky Lily** and win 300 coins for **High Roller**
+- **Town layout** - five walk-ups now share the waterfront and scale down slightly on narrow windows so the riverboat, market, store, boat dealer and quest board all fit
 
 ## Updates (v1.7)
 

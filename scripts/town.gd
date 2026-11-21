@@ -1,15 +1,16 @@
 class_name Town
 extends Node2D
 
-## Town scene: four walk-up interactions (General Store, Fish Market,
-## Boat Dealer, Quest Giver), a walking player and the tunnel back to the
-## fishing scene.
+## Town scene: five walk-up interactions (General Store, Fish Market,
+## Lucky Lily riverboat, Boat Dealer, Quest Giver), a walking player and
+## the tunnel back to the fishing scene.
 ##
 ## Scene structure (all children are built in _ready(); town.tscn holds
 ## only the root node + this script):
 ##   Town (Node2D, town.gd)
 ##   ├─ GeneralStore (Interactable, store.gd)
 ##   ├─ FishMarket (Interactable, market.gd)
+##   ├─ LuckyLily (Interactable, casino.gd)
 ##   ├─ BoatDealer (Interactable, boat_dealer.gd)
 ##   ├─ QuestGiver (Interactable, quest_giver.gd)
 ##   ├─ TownPlayer (CharacterBody2D, town_player.gd)
@@ -18,6 +19,7 @@ extends Node2D
 const PixFont := preload("res://scripts/pixel_font.gd")
 const ChangelogLib := preload("res://scripts/changelog.gd")
 const TouchControls := preload("res://scripts/touch_controls.gd")
+const CasinoScript := preload("res://scripts/casino.gd")
 
 var view_size := Vector2(960.0, 540.0)
 var ground_y := 430.0
@@ -96,9 +98,11 @@ func _on_updates() -> void:
 func _relayout() -> void:
 	view_size = get_viewport_rect().size
 	ground_y = view_size.y * 0.78
+	var art_scale := _art_scale()
 	for entry in layout:
 		var node: Interactable = entry["node"]
 		node.position = Vector2(view_size.x * float(entry["x"]), ground_y + float(entry["y"]))
+		node.scale = Vector2(art_scale, art_scale)
 	# Keep the walker where it is when the window resizes (the old code
 	# teleported it back to the middle of town) and only clamp it into the
 	# new walkable lane.
@@ -116,15 +120,23 @@ func _walk_bounds() -> Rect2:
 func _spawn_interactables() -> void:
 	interactables.clear()
 	layout.clear()
-	_add("GeneralStore", GeneralStore.new(), 0.20, 0.0)
-	_add("FishMarket", FishMarket.new(), 0.47, 0.0)
-	_add("BoatDealer", BoatDealer.new(), 0.72, 0.0)
-	_add("QuestGiver", QuestGiver.new(), 0.92, 18.0)
+	_add("GeneralStore", GeneralStore.new(), 0.16, 0.0)
+	_add("FishMarket", FishMarket.new(), 0.36, 0.0)
+	_add("LuckyLily", CasinoScript.new(), 0.56, 0.0)
+	_add("BoatDealer", BoatDealer.new(), 0.76, 0.0)
+	_add("QuestGiver", QuestGiver.new(), 0.93, 18.0)
+
+
+## Buildings shrink a little on narrow windows (640x360 phones) so five
+## walk-ups still fit side by side without their awnings overlapping.
+func _art_scale() -> float:
+	return clampf(view_size.x / 900.0, 0.72, 1.0)
 
 
 func _add(name_str: String, node: Interactable, x_frac: float, y_off: float) -> void:
 	node.name = name_str
 	node.position = Vector2(view_size.x * x_frac, ground_y + y_off)
+	node.scale = Vector2(_art_scale(), _art_scale())
 	node.setup(self)
 	add_child(node)
 	interactables.append(node)

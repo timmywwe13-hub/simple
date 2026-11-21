@@ -6,9 +6,20 @@ extends RefCounted
 ## list. Bump VERSION and add a new entry on every release; the menu shows
 ## a "!" badge until the player opens the screen once (GameState.seen_version).
 
-const VERSION := "1.7"
+const VERSION := "1.8"
 
 const ENTRIES := [
+	{
+		"version": "1.8",
+		"title": "ALL IN AT THE LUCKY LILY",
+		"items": [
+			"THE LUCKY LILY - a toy-coin riverboat has docked in Town. Walk up and press E to play Skipper's Coin (48% pays 2X), Pearl Shells (30% pays 3X) or Lucky Catch (a 12-stop reel with a 5X jackpot). Stakes run from 10 to 500 coins, every payout includes the returned stake, and the house edges are 4%, 10% and 8.3%.",
+			"NO REAL MONEY - the Lucky Lily only uses the coins you earn from fishing and selling. There are no purchases, no chips to buy and no real-money gambling anywhere in the game.",
+			"FAST, SAFE SETTLING - wagers settle the moment you press the button, so closing the panel during a reveal can never lose or duplicate a payout. Casino winnings never count as fish sales and never receive the 2X coin event.",
+			"TWO NEW QUESTS - win any wager for Lucky Lily, and win 300 coins for High Roller. The riverboat ledger tracks your session net plus lifetime wagered, returned, net and biggest win.",
+			"TOWN LAYOUT - five walk-ups now share the waterfront (General Store, Fish Market, Lucky Lily, Boat Dealer and Quest Giver), with the buildings easing smaller on narrow phone-sized windows so the awnings still fit.",
+		],
+	},
 	{
 		"version": "1.7",
 		"title": "PLACES, SETTINGS AND TOUCH",

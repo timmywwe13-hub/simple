@@ -1,10 +1,14 @@
 extends Node
 
+const CasinoDBLib := preload("res://scripts/casino_db.gd")
+
 ## Persistent game state: coins, inventory, fish index, gear, quests.
 ## Saved to user://save.json via FileAccess store_var/get_var.
 ## Also owns the procedural audio player (see play_sound()).
 
 var coins := 50
+## Last Lucky Lily stake chosen by the player, persisted with the save.
+var casino_bet := 10
 var inventory := []
 var index := {}
 var gear := {"rod": "rod_stick", "line": "line_nylon", "bait": "", "bucket": "bucket_small",
@@ -20,6 +24,8 @@ var stats := {
 	"coins_earned": 0, "fish_sold": 0, "perfect_catches": 0,
 	"current_streak": 0, "best_streak": 0, "daily_catches": 0,
 	"biggest_fish": 0.0, "biggest_name": "", "days_fished": 0,
+	"casino_wagered": 0, "casino_returned": 0, "casino_wins": 0,
+	"casino_biggest_win": 0,
 }
 var muted := false
 ## The version whose What's New screen has been read (shown once with a
@@ -162,6 +168,11 @@ const QUEST_DEFS := [
 		"kind": "catch_streak", "target": 6, "need": 6, "reward": 220},
 	{"id": "islander", "title": "Island Angler", "desc": "Catch 5 fish at Coconut Isle.",
 		"kind": "region_catch", "target": "island", "need": 5, "reward": 200},
+	# --- Lucky Lily toy-coin wagers (v1.8) ---
+	{"id": "lucky_lily", "title": "Lucky Lily", "desc": "Win a wager at the Lucky Lily.",
+		"kind": "casino_win", "target": 1, "need": 1, "reward": 50},
+	{"id": "high_roller", "title": "High Roller", "desc": "Win 300 coins at the Lucky Lily.",
+		"kind": "casino_won", "target": 300, "need": 300, "reward": 200},
 ]
 
 var quests: Array = []
@@ -589,6 +600,7 @@ func _save_data() -> Dictionary:
 		"save_version": save_version,
 		"settings": settings.duplicate(true),
 		"coins": coins,
+		"casino_bet": casino_bet,
 		"seen_version": seen_version,
 		"event_until": event_until,
 		"inventory": inventory,
@@ -698,6 +710,7 @@ func _load_game() -> void:
 	save_version = maxi(SAVE_VERSION, int(data.get("save_version", 0)))
 	_apply_saved_settings(data.get("settings", {}))
 	coins = int(data.get("coins", 50))
+	casino_bet = _clamp_casino_bet(int(data.get("casino_bet", 10)))
 	seen_version = String(data.get("seen_version", ""))
 	# Old saves have no event timestamp yet - give them the full window and
 	# persist the deadline together with the rest of the loaded state below.
@@ -807,6 +820,7 @@ func toggle_fullscreen() -> void:
 func reset_progress() -> void:
 	backup_save()
 	coins = 50
+	casino_bet = 10
 	inventory = []
 	index = {}
 	gear = {"rod": "rod_stick", "line": "line_nylon", "bait": "", "bucket": "bucket_small",
@@ -819,6 +833,8 @@ func reset_progress() -> void:
 		"coins_earned": 0, "fish_sold": 0, "perfect_catches": 0,
 		"current_streak": 0, "best_streak": 0, "daily_catches": 0,
 		"biggest_fish": 0.0, "biggest_name": "", "days_fished": 0,
+		"casino_wagered": 0, "casino_returned": 0, "casino_wins": 0,
+		"casino_biggest_win": 0,
 	}
 	has_axe = false
 	axe_level = 1
@@ -865,6 +881,40 @@ func event_time_text() -> String:
 
 func money_mult() -> float:
 	return 2.0 if event_active() else 1.0
+
+## Keep the saved Lucky Lily stake on one of the published rungs even if an
+## old or hand-edited save contains anything else.
+func _clamp_casino_bet(value: int) -> int:
+	for bet in CasinoDBLib.BETS:
+		if int(bet) == value:
+			return value
+	return int(CasinoDBLib.BETS[0])
+
+## Settle one Lucky Lily wager. This deliberately bypasses money_mult()
+## and sale_mult(): casino coins are not fish sales and the 2x coin event
+## must not turn a 2x coin toss into a 4x payout. Payout includes the stake,
+## so the player's net change is payout - stake and the balance can never go
+## below zero. Returns the net profit (negative for a loss, zero for a push).
+func casino_settle(stake: int, payout: int, _game_id: String = "") -> int:
+	var wager := maxi(0, stake)
+	var returned := maxi(0, payout)
+	var profit := returned - wager
+	coins = maxi(0, coins + profit)
+	stats["casino_wagered"] = int(stats.get("casino_wagered", 0)) + wager
+	stats["casino_returned"] = int(stats.get("casino_returned", 0)) + returned
+	if profit > 0:
+		stats["casino_wins"] = int(stats.get("casino_wins", 0)) + 1
+		stats["casino_biggest_win"] = maxi(int(stats.get("casino_biggest_win", 0)), profit)
+		coins_gained.emit(profit)
+		play_sound("coin")
+	elif profit < 0:
+		play_sound("buzz")
+	else:
+		play_sound("ui")
+	_check_quests("casino", "", {"win": profit > 0, "coins": maxi(0, profit)})
+	if AUTO_SAVE:
+		request_save()
+	return profit
 
 ## Quest rewards pay out doubled during the event too, so the board shows
 ## the amount the player will actually receive.
@@ -1328,6 +1378,12 @@ func _check_quests(kind: String, fish_id: String, data: Dictionary = {}) -> void
 			"catch_streak":
 				if kind == "catch":
 					q["progress"] = maxi(int(q.get("progress", 0)), int(data.get("streak", 0)))
+			"casino_win":
+				if kind == "casino" and bool(data.get("win", false)):
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"casino_won":
+				if kind == "casino":
+					q["progress"] = int(q.get("progress", 0)) + maxi(0, int(data.get("coins", 0)))
 		if int(q.get("progress", 0)) >= quest_need(q):
 			q["done"] = true
 
