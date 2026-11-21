@@ -395,9 +395,9 @@ static var FISH := {
 	"thunderhead_grouper": {
 		"id": "thunderhead_grouper", "name": "Thunderhead Grouper", "rarity": "Epic", "region": "ocean",
 		"weather": "storm",
-		"shape": "round", "pattern": "lightning",
-		"palette": {"body": "#37425f", "belly": "#b8cce0", "fin": "#232c44", "eye": "#ffe08a"},
-		"features": ["spikes", "fangs"],
+		"shape": "round", "pattern": "storm",
+		"palette": {"body": "#3d3560", "belly": "#b9bfd8", "fin": "#241f3a", "eye": "#ffe08a", "bolt": "#ffd447"},
+		"features": ["spikes", "fangs", "big_mouth"],
 		"weight_kg": [8.0, 30.0], "coin": 380, "catch_rate": 0.3,
 		"desc": "Hides under the storm and hits like a wave.",
 	},
@@ -429,8 +429,8 @@ static var FISH := {
 	"isle_electric_ray": {
 		"id": "isle_electric_ray", "name": "Isle Electric Ray", "rarity": "Epic", "region": "island",
 		"shape": "ray", "pattern": "lightning",
-		"palette": {"body": "#4a5370", "belly": "#d7e6eb", "fin": "#313b56", "eye": "#ffe45c"},
-		"features": ["glow"],
+		"palette": {"body": "#bd9160", "belly": "#f6e6c0", "fin": "#8a6339", "eye": "#ffe45c", "bolt": "#6fe7ff"},
+		"features": ["glow", "whip_tail", "wings"],
 		"bait_only": true,
 		"weight_kg": [4.0, 14.0], "coin": 330, "catch_rate": 0.25,
 		"desc": "It sleeps in the sand and wakes with a crackle.",

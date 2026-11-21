@@ -24,7 +24,8 @@ const SHAPE_ASPECT := {
 	"glow": 0.64,
 	"puffer": 0.82,
 	"shark": 0.36,
-	"ray": 0.54,
+	"ray": 0.30,
+	"manta": 0.30,
 	"deep": 0.60,
 	"ribbon": 0.20,
 	"serpent": 0.26,
@@ -115,17 +116,20 @@ static func draw_fish(ci: CanvasItem, rect: Rect2, fish: Dictionary,
 	var belly_c := Color(String(pal.get("belly", "#e8eef2")))
 	var fin_c := Color(String(pal.get("fin", "#9fb0bb")))
 	var eye_c := Color(String(pal.get("eye", "#1b2430")))
+	var bolt_c := Color(String(pal.get("bolt", "#ffe45c")))
 	var features: Array = fish.get("features", [])
+	var whip := features.has("whip_tail")
 
 	var aspect: float = float(SHAPE_ASPECT.get(shape, 0.44))
-	var tail_frac := 0.26
+	var tail_frac := 0.62 if whip else 0.26
 	if features.has("streamer"):
 		tail_frac += 0.22
 	if shape in ["eel", "ribbon"]:
 		tail_frac += 0.04
 	var head_frac := 0.46 if features.has("bill") else (0.16 if features.has("whiskers") else 0.06)
 	var len_by_w := (rect.size.x * 0.94) / (1.0 + tail_frac + head_frac)
-	var len_by_h := (rect.size.y * 0.70) / aspect
+	var height_factor := 0.44 if features.has("wings") else 0.70
+	var len_by_h := (rect.size.y * height_factor) / aspect
 	var body_len: float = minf(len_by_w, len_by_h)
 	var unit: float = clampf(rect.size.y / 14.0, 1.0, 20.0)
 	var cols: int = clampi(int(body_len / unit), 8, 36)
@@ -153,38 +157,49 @@ static func draw_fish(ci: CanvasItem, rect: Rect2, fish: Dictionary,
 	if not silhouette and (shape == "glow" or pattern == "glow" or features.has("glow")):
 		var gc := fin_c.lerp(Color("#ffffff"), 0.45)
 		var gcx := _bx(x0, body_len, facing, 0.55)
-		for i in range(4):
-			ci.draw_circle(Vector2(gcx, cy), body_len * (0.26 + 0.13 * float(i)),
-					Color(gc.r, gc.g, gc.b, 0.055 + 0.012 * float(i)))
+		var gmax: float = minf(rect.size.y * 0.52, body_len * 0.28)
+		for i in range(5):
+			ci.draw_circle(Vector2(gcx, cy), gmax * (0.35 + 0.14 * float(i)),
+					Color(gc.r, gc.g, gc.b, 0.042 + 0.009 * float(i)))
 
 	# --- caudal fin (behind the body) ---
 	var tail_x := _bx(x0, body_len, facing, 0.0) + facing * body_len * 0.02
-	var root_h: float = maxf(_hh(shape, 0.03, body_h), unit * 0.7)
-	var root_top := Vector2(tail_x, cy - root_h)
-	var root_bot := Vector2(tail_x, cy + root_h)
-	var tip_x: float = tail_x - tail_reach * facing
-	var tail_fill := fin_c if silhouette else fin_c.lightened(0.08)
-	if shape == "eel" or shape == "ribbon":
-		var tip := Vector2(tip_x, cy)
-		_tri(ci, root_top, tip, root_bot, tail_fill, outline, detail)
-		if detail:
-			ci.draw_line(root_top.lerp(tip, 0.7), tip, tail_fill.darkened(0.22),
-					maxf(1.0, unit * 0.12))
-			ci.draw_line(root_bot.lerp(tip, 0.7), tip, tail_fill.darkened(0.22),
-					maxf(1.0, unit * 0.12))
+	if whip:
+		# A whip tail instead of a caudal fan: the ray's signature.
+		var w0 := Vector2(tail_x, cy)
+		var w1 := w0 - Vector2(facing * body_len * 0.22, -body_h * 0.02)
+		var w2 := w0 - Vector2(facing * body_len * 0.42, body_h * 0.07)
+		var w3 := w0 - Vector2(facing * body_len * 0.60, -body_h * 0.05)
+		ci.draw_polyline(PackedVector2Array([w0, w1, w2, w3]),
+				fin_c.darkened(0.10), maxf(1.0, unit * 0.26))
+		ci.draw_line(w2, w3, fin_c.lightened(0.18), maxf(1.0, unit * 0.12))
 	else:
-		var tip_top := Vector2(tip_x, cy - body_h * 0.32)
-		var tip_bot := Vector2(tip_x, cy + body_h * 0.32)
-		var notch := Vector2(tip_x + tail_reach * 0.38 * facing, cy)
-		_tri(ci, root_top, tip_top, notch, tail_fill, outline, detail)
-		_tri(ci, notch, tip_bot, root_bot, tail_fill, outline, detail)
-		if detail:
-			for i in range(3):
-				var t := (float(i) + 1.0) / 4.0
-				ci.draw_line(root_top.lerp(notch, t), root_top.lerp(tip_top, 0.88),
-						tail_fill.darkened(0.22), maxf(1.0, unit * 0.12))
-				ci.draw_line(root_bot.lerp(notch, t), root_bot.lerp(tip_bot, 0.88),
-						tail_fill.darkened(0.22), maxf(1.0, unit * 0.12))
+		var root_h: float = maxf(_hh(shape, 0.03, body_h), unit * 0.7)
+		var root_top := Vector2(tail_x, cy - root_h)
+		var root_bot := Vector2(tail_x, cy + root_h)
+		var tip_x: float = tail_x - tail_reach * facing
+		var tail_fill := fin_c if silhouette else fin_c.lightened(0.08)
+		if shape == "eel" or shape == "ribbon":
+			var tip := Vector2(tip_x, cy)
+			_tri(ci, root_top, tip, root_bot, tail_fill, outline, detail)
+			if detail:
+				ci.draw_line(root_top.lerp(tip, 0.7), tip, tail_fill.darkened(0.22),
+						maxf(1.0, unit * 0.12))
+				ci.draw_line(root_bot.lerp(tip, 0.7), tip, tail_fill.darkened(0.22),
+						maxf(1.0, unit * 0.12))
+		else:
+			var tip_top := Vector2(tip_x, cy - body_h * 0.32)
+			var tip_bot := Vector2(tip_x, cy + body_h * 0.32)
+			var notch := Vector2(tip_x + tail_reach * 0.38 * facing, cy)
+			_tri(ci, root_top, tip_top, notch, tail_fill, outline, detail)
+			_tri(ci, notch, tip_bot, root_bot, tail_fill, outline, detail)
+			if detail:
+				for i in range(3):
+					var t := (float(i) + 1.0) / 4.0
+					ci.draw_line(root_top.lerp(notch, t), root_top.lerp(tip_top, 0.88),
+							tail_fill.darkened(0.22), maxf(1.0, unit * 0.12))
+					ci.draw_line(root_bot.lerp(notch, t), root_bot.lerp(tip_bot, 0.88),
+							tail_fill.darkened(0.22), maxf(1.0, unit * 0.12))
 
 	# --- dorsal fin ---
 	if shape == "eel" or shape == "serpent" or shape == "ribbon":
@@ -377,6 +392,43 @@ static func draw_fish(ci: CanvasItem, rect: Rect2, fish: Dictionary,
 					var xc := _bx(x0, body_len, facing, u)
 					ci.draw_rect(Rect2(xc - unit * 0.18, cy - hw * 0.76,
 							unit * 0.36, hw * 1.52), Color(1, 1, 1, 0.30))
+			"storm":
+				# Heavy cloud banks along the back, rain streaks and one
+				# huge cloud-to-belly bolt.
+				for i in range(6):
+					var u := 0.16 + 0.12 * float(i)
+					var hw := _hh(shape, u, body_h)
+					var xc := _bx(x0, body_len, facing, u)
+					var w := maxf(step * 2.4, body_len * 0.14)
+					var h := hw * 0.62
+					var y := cy - hw * 0.58
+					ci.draw_rect(Rect2(xc - w * 0.5, y - h * 0.35, w, h * 0.70),
+							body_c.darkened(0.16))
+					ci.draw_rect(Rect2(xc - w * 0.32, y - h * 0.62, w * 0.64, h * 0.45),
+							body_c.darkened(0.26))
+				for i in range(5):
+					var u := 0.20 + 0.12 * float(i)
+					var hw := _hh(shape, u, body_h)
+					var xc := _bx(x0, body_len, facing, u)
+					var y0 := cy - hw * 0.15
+					ci.draw_line(Vector2(xc, y0),
+							Vector2(xc - facing * body_len * 0.035, y0 + body_h * 0.28),
+							Color(bolt_c.r, bolt_c.g, bolt_c.b, 0.55), maxf(1.0, unit * 0.08))
+				var bu := 0.58
+				var bx0 := _bx(x0, body_len, facing, bu)
+				var bh := _hh(shape, bu, body_h)
+				var big_bolt := PackedVector2Array([
+						Vector2(bx0 - bh * 0.10, cy - bh * 0.78),
+						Vector2(bx0 + bh * 0.18, cy - bh * 0.36),
+						Vector2(bx0 - bh * 0.16, cy - bh * 0.02),
+						Vector2(bx0 + bh * 0.20, cy + bh * 0.28),
+						Vector2(bx0 - bh * 0.10, cy + bh * 0.62),
+						Vector2(bx0 + bh * 0.04, cy + bh * 0.86)])
+				ci.draw_polyline(big_bolt, Color(0.08, 0.07, 0.12, 0.70),
+						maxf(2.0, unit * 0.75))
+				ci.draw_polyline(big_bolt, bolt_c, maxf(1.0, unit * 0.48))
+				ci.draw_polyline(big_bolt, Color(1.0, 1.0, 0.92, 0.95),
+						maxf(1.0, unit * 0.15))
 			"lightning":
 				# Three sharp bolts cross the body from back to belly. They are
 				# deliberately thin: a wide glow reads as a yellow rope, not
@@ -390,8 +442,9 @@ static func draw_fish(ci: CanvasItem, rect: Rect2, fish: Dictionary,
 							Vector2(xb + hb * 0.16, cy - hb * 0.28),
 							Vector2(xb - hb * 0.14, cy + hb * 0.10),
 							Vector2(xb + hb * 0.10, cy + hb * 0.62)])
-					ci.draw_polyline(bolt, Color(1.0, 0.9, 0.32, 0.15), maxf(2.0, unit * 1.8))
-					ci.draw_polyline(bolt, Color("#ffe45c"), maxf(1.0, unit * 0.50))
+					ci.draw_polyline(bolt, Color(bolt_c.r, bolt_c.g, bolt_c.b, 0.15),
+							maxf(2.0, unit * 1.8))
+					ci.draw_polyline(bolt, bolt_c, maxf(1.0, unit * 0.50))
 					ci.draw_polyline(bolt, Color(1.0, 1.0, 0.92, 0.92), maxf(1.0, unit * 0.16))
 				# A few loose sparks above the spine.
 				for i in range(4):
@@ -399,7 +452,7 @@ static func draw_fish(ci: CanvasItem, rect: Rect2, fish: Dictionary,
 					var sx := _bx(x0, body_len, facing, u3)
 					var sy := cy - _hh(shape, u3, body_h) - unit * (0.9 + 0.30 * float(i % 2))
 					ci.draw_rect(Rect2(sx - unit * 0.16, sy - unit * 0.16, unit * 0.32, unit * 0.32),
-							Color(1.0, 0.92, 0.40, 0.9))
+							bolt_c.lightened(0.25))
 
 	# --- gills ---
 	if detail:
@@ -487,6 +540,10 @@ static func _fin_rays(ci: CanvasItem, base_a: Vector2, base_b: Vector2, tip: Vec
 		ci.draw_line(from, from.lerp(tip, 0.82), color, width)
 
 
+static func features_has(fish: Dictionary, feat: String) -> bool:
+	return (fish.get("features", []) as Array).has(feat)
+
+
 ## Extra silhouettes that make a species read as itself: whiskers, bills,
 ## horns, sails, spikes, fangs, lanterns, wings, crests, streamers and the
 ## hammerhead's T-bar. Everything is drawn from the fish's own fin color so
@@ -500,6 +557,8 @@ static func _draw_features(ci: CanvasItem, fish: Dictionary, x0: float, body_len
 	var shape: String = String(fish.get("shape", "minnow"))
 	var fc := Color("#141d27") if silhouette else fin_c
 	var pale := Color("#141d27") if silhouette else fin_c.lightened(0.5)
+	var pal: Dictionary = fish.get("palette", {})
+	var bolt_c := Color(String(pal.get("bolt", "#ffe45c")))
 	var head_x := _bx(x0, body_len, facing, 0.88)
 	var nose_x := _bx(x0, body_len, facing, 1.0)
 	var tail_x := _bx(x0, body_len, facing, 0.03)
@@ -568,6 +627,26 @@ static func _draw_features(ci: CanvasItem, fish: Dictionary, x0: float, body_len
 				ci.draw_line(Vector2(mouth.x - facing * unit * 1.8, mouth.y),
 						Vector2(mouth.x + facing * unit * 0.2, mouth.y),
 						fc.darkened(0.25), maxf(1.0, unit * 0.14))
+			"big_mouth":
+				var mu0 := 0.84
+				var mu1 := 0.995
+				var m0 := Vector2(_bx(x0, body_len, facing, mu0),
+						cy + _hh(shape, mu0, body_h) * 0.10)
+				var m1 := Vector2(_bx(x0, body_len, facing, mu1),
+						cy + _hh(shape, mu1, body_h) * 0.18)
+				var jaw := Vector2(_bx(x0, body_len, facing, 0.93),
+						cy + _hh(shape, 0.93, body_h) * 0.60)
+				var mouth_c := fc if silhouette else fc.darkened(0.35)
+				ci.draw_colored_polygon(PackedVector2Array([m0, m1, jaw]), mouth_c)
+				ci.draw_line(m0, m1, pale, maxf(1.0, unit * 0.16))
+				ci.draw_line(m0, jaw, fc.lightened(0.16), maxf(1.0, unit * 0.12))
+				ci.draw_line(jaw, m1, fc.lightened(0.16), maxf(1.0, unit * 0.12))
+				if not silhouette:
+					ci.draw_colored_polygon(PackedVector2Array([
+							Vector2(jaw.x - facing * unit * 0.5, jaw.y),
+							Vector2(jaw.x + facing * unit * 0.7, jaw.y - unit * 0.1),
+							Vector2(jaw.x + facing * unit * 0.6, jaw.y + unit * 0.5)]),
+							Color("#c9566e"))
 			"lantern":
 				var base := Vector2(_bx(x0, body_len, facing, 0.84),
 						cy - _hh(shape, 0.84, body_h) * 0.55)
@@ -578,14 +657,47 @@ static func _draw_features(ci: CanvasItem, fish: Dictionary, x0: float, body_len
 					ci.draw_circle(tip, unit * 1.15, Color(glow.r, glow.g, glow.b, 0.35))
 					ci.draw_circle(tip, unit * 0.58, glow)
 			"wings":
-				var shoulder := Vector2(_bx(x0, body_len, facing, 0.55), cy)
-				var tip1 := Vector2(_bx(x0, body_len, facing, 0.02), cy + body_h * 0.52)
-				var tip2 := Vector2(_bx(x0, body_len, facing, 0.98), cy + body_h * 0.46)
-				ci.draw_colored_polygon(PackedVector2Array([shoulder, tip1, tip2]), fc)
-				var top1 := Vector2(_bx(x0, body_len, facing, 0.08), cy - body_h * 0.30)
-				var top2 := Vector2(_bx(x0, body_len, facing, 0.94), cy - body_h * 0.24)
-				ci.draw_colored_polygon(PackedVector2Array([
-						Vector2(shoulder.x, cy - body_h * 0.10), top1, top2]), fc)
+				# Two broad pectoral wings above and below the flat body,
+				# leaving the body visible between them.
+				var wf := Vector2(_bx(x0, body_len, facing, 0.80),
+						cy - _hh(shape, 0.80, body_h) * 0.96)
+				var wa := Vector2(_bx(x0, body_len, facing, 0.68), cy - body_h * 1.02)
+				var wb := Vector2(_bx(x0, body_len, facing, 0.22), cy - body_h * 0.62)
+				var wr := Vector2(_bx(x0, body_len, facing, 0.06),
+						cy - _hh(shape, 0.06, body_h) * 0.96)
+				var upper := PackedVector2Array([wf, wa, wb, wr])
+				ci.draw_colored_polygon(upper, fc)
+				var lower := PackedVector2Array([
+						Vector2(wf.x, cy * 2.0 - wf.y), Vector2(wa.x, cy * 2.0 - wa.y),
+						Vector2(wb.x, cy * 2.0 - wb.y), Vector2(wr.x, cy * 2.0 - wr.y)])
+				ci.draw_colored_polygon(lower, fc)
+				if not silhouette:
+					var electric := features_has(fish, "glow") and pal.has("bolt")
+					var edge := bolt_c if electric else fc.darkened(0.30)
+					var ray_c := Color(bolt_c.r, bolt_c.g, bolt_c.b, 0.55) if electric else fc.darkened(0.20)
+					for poly in [upper, lower]:
+						# Trace the free edges only; the edge that touches the
+						# body stays body-coloured.
+						ci.draw_polyline(PackedVector2Array([
+								poly[0], poly[1], poly[2], poly[3]]), edge,
+								maxf(1.0, unit * 0.18))
+					# wing rays
+					for i in range(3):
+						var t := (float(i) + 1.0) / 4.0
+						ci.draw_line(wf.lerp(wr, t), wa.lerp(wb, t), ray_c,
+								maxf(1.0, unit * 0.10))
+						ci.draw_line(Vector2(wf.x, cy * 2.0 - wf.y).lerp(
+								Vector2(wr.x, cy * 2.0 - wr.y), t),
+								Vector2(wa.x, cy * 2.0 - wa.y).lerp(
+								Vector2(wb.x, cy * 2.0 - wb.y), t),
+								ray_c, maxf(1.0, unit * 0.10))
+					# cephalic fins / horns at the front
+					for sgn in [-1.0, 1.0]:
+						var root := Vector2(_bx(x0, body_len, facing, 0.92),
+								cy + float(sgn) * body_h * 0.12)
+						var tip := root + Vector2(facing * body_len * 0.12,
+								float(sgn) * body_h * 0.10)
+						ci.draw_line(root, tip, edge, maxf(1.0, unit * 0.24))
 			"streamer":
 				for sgn in [-1.0, 1.0]:
 					var root := Vector2(tail_x, cy + float(sgn) * _hh(shape, 0.03, body_h) * 0.8)
