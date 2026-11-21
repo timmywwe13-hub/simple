@@ -174,3 +174,39 @@ This produces the static site in `build/web/` (already built in this repo). To d
 - **Git:** connect the repo in Netlify; `netlify.toml` publishes `build/web` (commit the folder after rebuilding).
 
 Saves work in the browser via `user://` (persisted in IndexedDB), so no backend is needed.
+
+## Web deploy (Cloudflare Workers)
+
+Cloudflare Workers static assets (and Pages) reject any single file over **25 MiB**,
+and Godot's release `index.wasm` is ~38 MiB, so it cannot be uploaded as one
+asset. The repo works around that:
+
+- `scripts/cf-build.sh` copies `build/web/` to `dist/` and splits `index.wasm`
+  into `index.wasm.part0..N` (~16 MiB each) plus `index.wasm.parts.json`.
+- `worker/index.js` answers `/index.wasm` by streaming those parts back in order
+  as a single `application/wasm` response; every other path goes straight to
+  static assets.
+- `wrangler.jsonc` points `assets.directory` at `dist/`, wires the Worker, and
+  runs the build script through `build.command`.
+
+Deploy from the Cloudflare dashboard (GitHub-connected Worker):
+
+1. **Settings → Build**: Deploy command `npx wrangler deploy`, Build command
+   empty (wrangler runs `scripts/cf-build.sh` itself). Root directory = repo root.
+2. If the Worker is named something other than `simple`, set `name` in
+   `wrangler.jsonc` to match.
+3. Commit the rebuilt `build/web/` with your changes — CI deploys the committed
+   export, it does not run Godot.
+
+Locally:
+
+```
+bash ./scripts/cf-build.sh   # assemble dist/
+npx wrangler dev             # http://127.0.0.1:8787
+```
+
+Notes: game content lives in `index.pck`, so normal updates only change that
+~1.6 MiB file — the wasm parts change only when you upgrade Godot's web export
+templates. Do **not** try to ship the wasm gzipped with a `Content-Encoding`
+header: Cloudflare's edge compresses Worker responses itself, which yields a
+double-encoded body that fails to instantiate.
