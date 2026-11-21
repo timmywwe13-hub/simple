@@ -110,6 +110,7 @@ res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 - **Touch overhaul** - analog thumb-stick, safe-area insets, large touch targets, context-only buttons, a portrait rotate overlay, touch HUD hints and an aim reticle. The small buttons no longer cover the water while you fish
 - **Fish Index 2.0** - pick any species (hover, click, tap or arrow keys) for a detail pane with art, rarity, description, where/when it bites, personal best, catch count and per-region completion
 - **Fish art polish** - tapered, shaded bodies with a lighter belly and dorsal sheen, flared forked tails, fin rays, gills, lateral lines, glinting eyes and cleaner pattern work. Bills, whiskers and streamers fit inside the card, and tails are no longer hidden behind the body
+- **Volt Serpent redesign** - the legendary sea serpent gets its own renderer: a long sinuous body, a jawed head with a slit eye, fangs and a forked tongue, a spined dorsal crest, an electric forked tail and lightning that crosses its body
 - **Juice and audio** - splash rings at the bobber, coins that fly to the HUD on a sale, a catch card that scales in, scene fades on travel, region ambience (fireflies, gulls, spray, loons) and procedural music that crossfades per place and time of day
 - **Distribution** - Windows and Android presets, and the web build is an installable PWA with icons, an offline page and a landscape orientation
 
