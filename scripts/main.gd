@@ -1,6 +1,7 @@
 extends Node2D
 
 const PixFont := preload("res://scripts/pixel_font.gd")
+const ChangelogLib := preload("res://scripts/changelog.gd")
 const TouchControls := preload("res://scripts/touch_controls.gd")
 
 const STATE_MENU := 0
@@ -13,8 +14,11 @@ const STATE_INDEX := 6
 const STATE_SHOP := 7
 const STATE_STATS := 8
 const STATE_PAUSED := 9
+const STATE_UPDATES := 10
 
 const WATER_RATIO := 0.60
+## Height of the start screen card (five menu buttons now).
+const MENU_PANEL_H := 440.0
 
 ## Fishing minigame balance, tuned for human reaction times: a generous
 ## hook window, a slow readable sweep on the timing bar, and a forgiving
@@ -109,6 +113,13 @@ var tunnel: Tunnel
 var walk_phase := 0.0
 var walking := false
 var fisher_speed := 150.0
+## Smooth walking: velocity eases up/down, facing follows it, and the
+## boots leave little dust puffs on the bank.
+var walk_vel := 0.0
+var walk_ratio := 0.0
+var fisher_facing := 1.0
+var last_step := 0
+var dust: Array[Dictionary] = []
 var ambient_fish: Array[Dictionary] = []
 var key_prev := {}
 var hover_button := -1
@@ -153,6 +164,9 @@ var stats_mute_btn: Button
 var pause_panel: Control
 var pause_mute_btn: Button
 var paused_from := STATE_WORLD
+var updates_panel: Control
+var updates_body: VBoxContainer
+var updates_from_pause := false
 
 
 func _ready() -> void:
@@ -170,6 +184,7 @@ func _ready() -> void:
 	_build_shop()
 	_build_stats()
 	_build_pause()
+	_build_updates()
 	_build_ambient_fish()
 	weather_next = _roll_weather()
 	if GameState.session_started:
@@ -320,6 +335,7 @@ func _process(dt: float) -> void:
 
 	mouse_pos = get_viewport().get_mouse_position()
 	GameState.update_bait(dt)
+	_update_dust(dt)
 
 	match state:
 		STATE_MENU:
@@ -392,7 +408,7 @@ func _touch_context() -> String:
 			return "fishing"
 		STATE_REEL:
 			return "reel"
-		STATE_PAUSED:
+		STATE_PAUSED, STATE_UPDATES:
 			return "hidden"
 		_:
 			return "hidden"
@@ -526,6 +542,7 @@ func _update_menu() -> void:
 			"index": _on_index()
 			"shop": _on_shop()
 			"stats": _on_stats()
+			"updates": _on_updates()
 	elif Input.is_action_just_pressed("ui_accept"):
 		# SPACE / Enter starts the game even without hovering a button
 		GameState.play_sound("ui")
@@ -570,6 +587,9 @@ func _update_world(dt: float) -> void:
 		_exit_open_water()
 	if _key_edge(KEY_I):
 		_on_index(true)
+		# opening the index ends this frame's world update, so a click made
+		# with the same press can never start a cast behind the panel
+		return
 	for i in range(4):
 		if not _key_edge(KEY_1 + i):
 			continue
@@ -707,23 +727,73 @@ static func _clock_text(seconds: int) -> String:
 
 
 ## On-foot movement along the bank, plus the tunnel to the Town scene.
+## Input eases into a velocity instead of snapping, so starting and stopping
+## reads as a walk rather than a teleport. The step counter kicks up a tiny
+## dust puff on each footfall.
 func _update_walk(dt: float) -> void:
-	var walk := Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
-	walking = absf(walk) > 0.1
+	var walk := clampf(Input.get_action_strength("move_right")
+			- Input.get_action_strength("move_left"), -1.0, 1.0)
+	var target := walk * fisher_speed
+	var rate := 1050.0 if absf(walk) > 0.05 else 1400.0
+	walk_vel = move_toward(walk_vel, target, rate * dt)
+	walk_ratio = clampf(absf(walk_vel) / fisher_speed, 0.0, 1.0)
+	walking = walk_ratio > 0.035
+	if walking and absf(walk_vel) > 10.0:
+		fisher_facing = 1.0 if walk_vel > 0.0 else -1.0
+
 	if walking:
-		fisher_x = clampf(fisher_x + walk * fisher_speed * dt, 30.0, bank_w - 40.0)
-		# walking off the west end of Coconut Isle sails you home
-		if is_island and fisher_x <= 40.0 and walk < -0.5:
-			_exit_island()
-			return
-		walk_phase = fposmod(walk_phase + dt * 9.0, TAU)
+		var next_x := fisher_x + walk_vel * dt
+		var clamped_x := clampf(next_x, 30.0, bank_w - 40.0)
+		if not is_equal_approx(clamped_x, next_x):
+			# wedged against the edge of the bank: stop the gait cleanly
+			walk_vel = 0.0
+			walk_ratio = 0.0
+			walking = false
+		fisher_x = clamped_x
+		if walking:
+			walk_phase = fposmod(walk_phase + dt * (4.5 + 7.5 * walk_ratio), TAU)
+			var step_index := int(floor(walk_phase / PI))
+			if step_index != last_step:
+				last_step = step_index
+				if walk_ratio > 0.3:
+					_spawn_dust(Vector2(fisher_x + (6.0 if step_index % 2 == 0 else -6.0),
+							bank_top - 1.0))
 	else:
-		walk_phase = move_toward(walk_phase, 0.0, dt * 18.0)
+		walk_phase = move_toward(walk_phase, 0.0, dt * 14.0)
+	# walking off the west end of Coconut Isle sails you home
+	if is_island and fisher_x <= 32.0 and walk < -0.5:
+		_exit_island()
+		return
 	rod_tip = Vector2(fisher_x + 74.0, floor(bank_top - 78.0))
 	if tunnel and tunnel.visible and not tunnel.triggered \
 			and tunnel.proximity_check(Vector2(fisher_x, bank_top + 1.5)):
 		tunnel.triggered = true
 		GameState.travel(tunnel.target_scene)
+
+
+## Small dust puff under the foot that just landed. Stored in world space
+## so it stays behind as the fisher walks on.
+func _spawn_dust(pos: Vector2) -> void:
+	dust.append({
+		"pos": pos + Vector2(randf_range(-3.0, 3.0), -1.0),
+		"vel": Vector2(-signf(walk_vel) * randf_range(6.0, 15.0), randf_range(-13.0, -5.0)),
+		"life": randf_range(0.26, 0.4),
+		"max_life": 0.4,
+		"size": randf_range(2.0, 3.0),
+	})
+	if dust.size() > 24:
+		dust.remove_at(0)
+
+
+func _update_dust(dt: float) -> void:
+	for i in range(dust.size() - 1, -1, -1):
+		var d: Dictionary = dust[i]
+		d["life"] = float(d["life"]) - dt
+		if float(d["life"]) <= 0.0:
+			dust.remove_at(i)
+			continue
+		d["pos"] = Vector2(d["pos"]) + Vector2(d["vel"]) * dt
+		d["vel"] = Vector2(d["vel"]) * 0.9
 
 
 ## Sailing: A/D (or left/right) row the equipped boat along the water.
@@ -812,6 +882,10 @@ func _cast_start() -> void:
 		msg("BAIT UP FIRST - ISLAND FISH ONLY EAT BAIT (SHOP: ESC)")
 		GameState.play_sound("buzz")
 		return
+	# casting plants the feet: clear any leftover walk animation
+	walking = false
+	walk_vel = 0.0
+	walk_phase = 0.0
 	state = STATE_CAST
 	cast_travel = 0.0
 	bobber_home = cast_target
@@ -1148,6 +1222,8 @@ func hide_all_ui() -> void:
 		stats_panel.visible = false
 	if pause_panel:
 		pause_panel.visible = false
+	if updates_panel:
+		updates_panel.visible = false
 
 
 func menu_panel_show() -> void:
@@ -1184,6 +1260,16 @@ func _on_back() -> void:
 			else:
 				show_menu()
 		STATE_STATS: show_menu()
+		STATE_UPDATES:
+			if updates_from_pause:
+				updates_from_pause = false
+				hide_all_ui()
+				if pause_panel:
+					pause_panel.visible = true
+				state = STATE_PAUSED
+				_refresh_pause()
+			else:
+				show_menu()
 		STATE_CAUGHT: _on_catch_continue()
 		_: show_menu()
 
@@ -1209,6 +1295,18 @@ func _on_stats() -> void:
 	stats_panel.visible = true
 	state = STATE_STATS
 	_refresh_stats()
+
+
+## The What's New screen is reachable from the main menu and the pause menu
+## (and U in Town). Opening it marks this version as read.
+func _on_updates(from_pause := false) -> void:
+	GameState.play_sound("ui")
+	ChangelogLib.mark_seen()
+	updates_from_pause = from_pause
+	hide_all_ui()
+	_refresh_updates()
+	updates_panel.visible = true
+	state = STATE_UPDATES
 
 
 func _on_catch_continue() -> void:
@@ -1283,6 +1381,8 @@ func _refresh_stats() -> void:
 		"BUCKET             %d / %d" % [GameState.inventory_count(), GameState.bucket_capacity()],
 		"DAILY CATCH        %s x2" % daily,
 		"HOT DEMAND         %s" % "  ".join(hot_names),
+		"2X COIN EVENT      %s" % (("LIVE - %s LEFT" % GameState.event_time_text())
+				if GameState.event_active() else "ENDED"),
 	]
 	stats_label.text = "\n".join(lines)
 	if stats_mute_btn != null:
@@ -1301,12 +1401,12 @@ func _build_pause() -> void:
 	p.add_child(dim)
 	var card := Control.new()
 	card.set_anchors_preset(Control.PRESET_CENTER)
-	card.position = Vector2(-210.0, -180.0)
-	card.size = Vector2(420.0, 360.0)
+	card.position = Vector2(-210.0, -188.0)
+	card.size = Vector2(420.0, 376.0)
 	p.add_child(card)
 	var bg := ColorRect.new()
 	bg.color = GameTheme.PANEL
-	bg.size = Vector2(420.0, 360.0)
+	bg.size = Vector2(420.0, 376.0)
 	card.add_child(bg)
 	var border := ColorRect.new()
 	border.color = GameTheme.CREAM
@@ -1321,17 +1421,67 @@ func _build_pause() -> void:
 	hint.size = Vector2(420.0, 22.0)
 	var resume := UILib.button(card, "RESUME", _resume_game, 18, GameTheme.LEAF,
 			Color("#7fbd70"), Color("#4f7f45"), UILib.CREAM, Vector2(340.0, 44.0))
-	resume.position = Vector2(40.0, 92.0)
+	resume.position = Vector2(40.0, 84.0)
 	pause_mute_btn = UILib.button(card, "SOUND: ON", _toggle_mute, 18, GameTheme.PANEL_LIGHT,
 			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
-	pause_mute_btn.position = Vector2(40.0, 148.0)
+	pause_mute_btn.position = Vector2(40.0, 132.0)
 	var shop := UILib.button(card, "SHOP & CRAFT", _open_shop_from_pause, 18, GameTheme.PANEL_LIGHT,
 			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
-	shop.position = Vector2(40.0, 204.0)
+	shop.position = Vector2(40.0, 180.0)
+	var updates := UILib.button(card, "WHAT'S NEW", _on_updates.bind(true), 18, GameTheme.PANEL_LIGHT,
+			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
+	updates.position = Vector2(40.0, 228.0)
 	var menu := UILib.button(card, "MAIN MENU", _pause_to_menu, 18, GameTheme.PANEL_LIGHT,
 			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
-	menu.position = Vector2(40.0, 260.0)
+	menu.position = Vector2(40.0, 276.0)
 	p.visible = false
+
+
+## Patch-notes screen. The body is rebuilt on open so the 2x event
+## countdown is always current.
+func _build_updates() -> void:
+	var p := Control.new()
+	p.name = "Updates"
+	p.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ui_layer.add_child(p)
+	updates_panel = p
+	var bg := ColorRect.new()
+	bg.color = GameTheme.PANEL
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	p.add_child(bg)
+	var title := UILib.label(p, "WHAT'S NEW", 30, GameTheme.CREAM, true, HORIZONTAL_ALIGNMENT_LEFT)
+	title.position = Vector2(28, 18)
+	var sub := UILib.label(p, "V%s - EVERYTHING IN THE LATEST UPDATE" % ChangelogLib.VERSION, 15,
+			Color("#a8c0cc"))
+	sub.position = Vector2(28, 54)
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scroll.offset_left = 28
+	scroll.offset_top = 88
+	scroll.offset_right = -28
+	scroll.offset_bottom = -76
+	p.add_child(scroll)
+	updates_body = VBoxContainer.new()
+	updates_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	updates_body.add_theme_constant_override("separation", 4)
+	scroll.add_child(updates_body)
+	var b := UILib.button(p, "BACK", _on_back, 20, GameTheme.PANEL_LIGHT)
+	b.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	b.offset_left = 28
+	b.offset_top = -60
+	b.offset_right = 188
+	b.offset_bottom = -16
+	b.custom_minimum_size = Vector2(160, 44)
+	p.visible = false
+
+
+func _refresh_updates() -> void:
+	if updates_body == null:
+		return
+	for c in updates_body.get_children():
+		updates_body.remove_child(c)
+		c.queue_free()
+	ChangelogLib.fill(updates_body)
 
 
 ## The pause menu can open the Tackle Shop, so the Coconut Isle rods and
@@ -1730,6 +1880,10 @@ func _on_buy_bait(category: String, id: String) -> void:
 
 
 func _on_sell_all() -> void:
+	if GameState.inventory.is_empty():
+		msg("BUCKET EMPTY - CATCH SOME FISH FIRST")
+		GameState.play_sound("buzz")
+		return
 	var total := GameState.sell_all()
 	msg("SOLD ALL FISH FOR %d COINS!" % total)
 	_refresh_shop()
@@ -1739,12 +1893,14 @@ func _menu_button_rects() -> Array:
 	var bw := 260.0
 	var bh := 36.0
 	var bx := (view_size.x - bw) * 0.5
-	var by := (view_size.y - 390.0) * 0.5 + 150.0
+	var by := (view_size.y - MENU_PANEL_H) * 0.5 + 150.0
 	return [
 		{"id": "start", "rect": Rect2(bx, by, bw, bh), "label": "START FISHING"},
 		{"id": "index", "rect": Rect2(bx, by + 40.0, bw, bh), "label": "FISH INDEX"},
 		{"id": "shop", "rect": Rect2(bx, by + 80.0, bw, bh), "label": "TACKLE SHOP"},
 		{"id": "stats", "rect": Rect2(bx, by + 120.0, bw, bh), "label": "STATS & SOUND"},
+		{"id": "updates", "rect": Rect2(bx, by + 160.0, bw, bh),
+				"label": "WHAT'S NEW!" if ChangelogLib.is_unseen() else "WHAT'S NEW"},
 	]
 
 
@@ -1765,6 +1921,17 @@ func _draw_pixel_circle(center: Vector2, radius: float, color: Color, pixel := 4
 		var half := radius * sqrt(maxf(0.0, 1.0 - dy * dy))
 		var w := maxf(pixel, floorf(half * 2.0))
 		_pixel_rect(Rect2(center.x - w * 0.5, floorf(y), w, pixel), color)
+
+
+## Soft pixel shadow (a flattened ellipse) used under the fisher's boots.
+func _draw_ground_shadow(center: Vector2, rx: float, ry: float, color: Color) -> void:
+	var rows := maxi(2, int(ry / 2.0))
+	for i in range(rows):
+		var y := center.y - ry + (float(i) + 0.5) * (ry * 2.0 / float(rows))
+		var dy := (y - center.y) / maxf(0.001, ry)
+		var w := rx * sqrt(maxf(0.0, 1.0 - dy * dy))
+		if w > 0.5:
+			_pixel_rect(Rect2(center.x - w, y - 1.0, w * 2.0, 2.0), color)
 
 
 func _ui_panel(r: Rect2, fill: Color, border: Color, bw := 4.0) -> void:
@@ -2094,15 +2261,23 @@ func _draw_axe(o: Vector2) -> void:
 
 
 func _draw_fisher(t: float) -> void:
-	var bob := sin(t * 2.0) * 1.5
-	var swing := 0.0
-	if walking:
-		bob = absf(sin(walk_phase)) * 1.5
-		swing = sin(walk_phase) * 3.0
+	var on_foot := not in_boat
+	var bob := sin(t * 2.0) * 1.2
+	var stride := 0.0
+	var lift_a := 0.0
+	var lift_b := 0.0
+	var arm := 0.0
+	var ratio := 0.0
+	if on_foot and walking:
+		ratio = walk_ratio
+		bob = absf(sin(walk_phase)) * 1.9 * ratio
+		stride = sin(walk_phase) * 5.0 * ratio
+		lift_a = maxf(0.0, sin(walk_phase)) * 4.0 * ratio
+		lift_b = maxf(0.0, -sin(walk_phase)) * 4.0 * ratio
+		arm = sin(walk_phase) * 4.0 * ratio
 	var o := Vector2(floorf(fisher_x), floorf(bank_top + bob))
 	if in_boat:
 		bob = sin(t * 1.9) * 2.0
-		swing = 0.0
 		o = Vector2(floorf(boat_pos.x - 12.0), floorf(boat_pos.y - 2.0 + bob))
 		_draw_boat_at(t, boat_pos, false, false)
 	elif is_island:
@@ -2110,6 +2285,16 @@ func _draw_fisher(t: float) -> void:
 		_draw_boat_at(t, Vector2(bank_w + 30.0, _boat_surface_y()), true, false)
 	else:
 		_draw_boat_at(t, Vector2(bank_w + 44.0, _boat_surface_y()), true, false)
+
+	if on_foot:
+		_draw_ground_shadow(Vector2(o.x, bank_top + 1.0), 14.0 + ratio * 1.5, 4.0,
+				Color(0.04, 0.07, 0.1, 0.26))
+		for d in dust:
+			var p := Vector2(d["pos"])
+			var a := clampf(float(d["life"]) / float(d["max_life"]), 0.0, 1.0) * 0.5
+			var s := float(d["size"])
+			_pixel_rect(Rect2(p.x - s * 0.5, p.y - s * 0.5, s, s), Color(0.86, 0.8, 0.66, a))
+
 	# equipped lanterns cast a warm pool of light after dark
 	if is_night and String(GameState.gear.get("lantern", "lantern_none")) != "lantern_none":
 		draw_circle(o + Vector2(0.0, -18.0), 48.0, Color(1.0, 0.86, 0.55, 0.10))
@@ -2118,22 +2303,49 @@ func _draw_fisher(t: float) -> void:
 	var rod_ready := rod_out or state != STATE_WORLD
 	if not rod_ready:
 		_draw_rod(o, false)  # stowed across the back
-	_pixel_rect(Rect2(o.x - 10.0 - swing, o.y - 24.0, 7.0, 20.0), GameTheme.PANTS)
-	_pixel_rect(Rect2(o.x + 3.0 + swing, o.y - 24.0, 7.0, 20.0), GameTheme.PANTS)
-	_pixel_rect(Rect2(o.x - 12.0 - swing, o.y - 6.0, 9.0, 6.0), GameTheme.BOOT)
-	_pixel_rect(Rect2(o.x + 3.0 + swing, o.y - 6.0, 9.0, 6.0), GameTheme.BOOT)
-	_pixel_rect(Rect2(o.x - 11.0, o.y - 46.0, 22.0, 24.0), GameTheme.SHIRT)
-	_pixel_rect(Rect2(o.x - 11.0, o.y - 28.0, 22.0, 4.0), GameTheme.BELT)
-	_pixel_rect(Rect2(o.x + 7.0, o.y - 45.0, 9.0, 15.0), GameTheme.SHIRT_DARK)
-	_pixel_rect(Rect2(o.x - 7.0, o.y - 62.0, 15.0, 16.0), GameTheme.SKIN)
-	_pixel_rect(Rect2(o.x - 8.0, o.y - 64.0, 16.0, 7.0), GameTheme.HAIR)
-	_pixel_rect(Rect2(o.x - 9.0, o.y - 59.0, 3.0, 10.0), GameTheme.HAIR)
-	_pixel_rect(Rect2(o.x + 3.0, o.y - 56.0, 3.0, 3.0), GameTheme.INK)
+
+	if on_foot:
+		# back arm swings opposite the front arm
+		_pixel_rect(Rect2(o.x - 13.0 - arm * 0.8, o.y - 45.0, 6.0, 12.0), GameTheme.SHIRT_DARK)
+		_pixel_rect(Rect2(o.x - 14.0 - arm * 1.3, o.y - 35.0, 7.0, 6.0), GameTheme.SKIN)
+
+	# back leg, then the front leg - one foot lifts while the other plants
+	_pixel_rect(Rect2(o.x - 9.0 - stride * 0.7, o.y - 24.0, 7.0, 18.0 - lift_a),
+			GameTheme.PANTS.darkened(0.12))
+	_pixel_rect(Rect2(o.x - 11.0 - stride, o.y - 8.0 - lift_a, 9.0, 5.0), GameTheme.BOOT.darkened(0.1))
+
+	var lean := fisher_facing * ratio * 1.0
+	_pixel_rect(Rect2(o.x - 11.0 + lean, o.y - 46.0, 22.0, 24.0), GameTheme.SHIRT)
+	_pixel_rect(Rect2(o.x - 11.0 + lean, o.y - 28.0, 22.0, 4.0), GameTheme.BELT)
+	_pixel_rect(Rect2(o.x + 7.0 + lean, o.y - 45.0, 9.0, 15.0), GameTheme.SHIRT_DARK)
+	_pixel_rect(Rect2(o.x - 6.0 + lean, o.y - 45.0, 2.0, 15.0), GameTheme.SHIRT.lightened(0.12))
+
+	# front leg
+	_pixel_rect(Rect2(o.x + 2.0 + stride * 0.7, o.y - 24.0, 7.0, 18.0 - lift_b), GameTheme.PANTS)
+	_pixel_rect(Rect2(o.x + 3.0 + stride, o.y - 8.0 - lift_b, 9.0, 5.0), GameTheme.BOOT)
+
+	# front arm (the one holding the rod / axe)
+	if on_foot:
+		_pixel_rect(Rect2(o.x + 8.0 + lean + arm * 0.3, o.y - 45.0, 6.0, 11.0), GameTheme.SHIRT)
+		_pixel_rect(Rect2(o.x + 10.0 + lean, o.y - 36.0, 7.0, 6.0), GameTheme.SKIN)
+	else:
+		_pixel_rect(Rect2(o.x + 9.0, o.y - 36.0, 7.0, 6.0), GameTheme.SKIN)
+
+	# head, hair and eye - the eye glances the way the fisher walks
+	var look := 1.0 if fisher_facing > 0.0 else -1.0
+	_pixel_rect(Rect2(o.x - 7.0 + lean, o.y - 62.0, 15.0, 16.0), GameTheme.SKIN)
+	_pixel_rect(Rect2(o.x - 8.0 + lean, o.y - 64.0, 16.0, 7.0), GameTheme.HAIR)
+	_pixel_rect(Rect2(o.x + (-9.0 if look > 0.0 else 6.0) + lean, o.y - 59.0, 3.0, 10.0),
+			GameTheme.HAIR)
+	_pixel_rect(Rect2(o.x + (4.0 if look > 0.0 else -9.0) + lean, o.y - 66.0, 5.0, 4.0),
+			GameTheme.HAIR)
+	_pixel_rect(Rect2(o.x + (3.0 if look > 0.0 else -6.0) + lean, o.y - 56.0, 3.0, 3.0), GameTheme.INK)
+	_pixel_rect(Rect2(o.x - 7.0 + lean, o.y - 52.0, 3.0, 2.0), GameTheme.SKIN.darkened(0.12))
 	if rod_ready:
 		_draw_rod(o, true)
 	elif axe_out:
 		_draw_axe(o)
-	else:
+	elif not on_foot:
 		_pixel_rect(Rect2(o.x + 9.0, o.y - 33.0, 6.0, 6.0), GameTheme.WOOD_DARK)
 	if in_boat:
 		_draw_boat_at(t, boat_pos, false, true)  # near gunwale over the boots
@@ -2373,6 +2585,8 @@ func _draw_hud() -> void:
 				Vector2(view_size.x - PixFont.text_width(streak_txt, 2) - 12.0, 92.0),
 				streak_txt, GameTheme.LEAF, Color("#050a12", 0.6), 2, 1, 1)
 
+	_draw_event_banner(12.0)
+
 	if msg_text != "":
 		var txt := msg_text
 		var tw := PixFont.text_width(txt, 3)
@@ -2399,6 +2613,17 @@ func _draw_hud() -> void:
 				Color("#c8d6e2"), Color("#050a12", 0.6), 2, 1, 1)
 
 
+## Gold strip with the 2x coin countdown, used by the HUD and start menu.
+func _draw_event_banner(y: float) -> void:
+	if not GameState.event_active():
+		return
+	var txt := "2X COINS - %s LEFT" % GameState.event_time_text()
+	var w := PixFont.text_width(txt, 2) + 24.0
+	var x := (view_size.x - w) * 0.5
+	_ui_panel(Rect2(x, y, w, 26.0), Color("#141c2c", 0.86), GameTheme.GOLD, 3.0)
+	PixFont.draw_text_centered(self, view_size.x * 0.5, y + 5.0, txt, GameTheme.GOLD, 2, 1)
+
+
 ## Bait is bought at the shop and used up one charge per cast - without
 ## it rare fish barely bite, so the HUD keeps nudging the player.
 func _bait_hud_text() -> String:
@@ -2412,7 +2637,7 @@ func _bait_hud_text() -> String:
 func _draw_menu() -> void:
 	draw_rect(Rect2(0.0, 0.0, view_size.x, view_size.y), Color("#0b1320", 0.62))
 	var pw := 520.0
-	var ph := 390.0
+	var ph := MENU_PANEL_H
 	var px := (view_size.x - pw) * 0.5
 	var py := (view_size.y - ph) * 0.5
 	_ui_panel(Rect2(px, py, pw, ph), Color("#1d2536", 0.96), GameTheme.CREAM)
@@ -2425,14 +2650,19 @@ func _draw_menu() -> void:
 	var sw := PixFont.text_width(sub, 2)
 	PixFont.draw_text_shadowed(self, Vector2(px + (pw - sw) * 0.5, py + 126.0), sub,
 			Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
+	_draw_event_banner(maxf(10.0, py - 36.0))
 
 	menu_buttons = _menu_button_rects()
 	for i in range(menu_buttons.size()):
 		var b := menu_buttons[i] as Dictionary
 		var r := b["rect"] as Rect2
 		var hovered: bool = i == hover_button
+		var is_new: bool = String(b["id"]) == "updates" and ChangelogLib.is_unseen()
 		var fill := Color("#3c4a63") if hovered else Color("#2b3648")
-		_ui_panel(r, fill, GameTheme.CREAM if hovered else Color("#4b5a70"), 3.0)
+		if is_new and not hovered:
+			fill = Color("#4a3d24")
+		var border := GameTheme.CREAM if hovered else (GameTheme.GOLD if is_new else Color("#4b5a70"))
+		_ui_panel(r, fill, border, 3.0)
 		var label := String(b["label"])
 		var lw := PixFont.text_width(label, 3)
 		PixFont.draw_text_shadowed(self, Vector2(r.position.x + (r.size.x - lw) * 0.5,
@@ -2487,6 +2717,8 @@ func _draw_catch_popup() -> void:
 		tags.append("DAILY CATCH x2")
 	if GameState.is_hot_demand(catch_fish_id):
 		tags.append("HOT DEMAND +30%")
+	if GameState.event_active():
+		tags.append("2X EVENT")
 	if not tags.is_empty():
 		PixFont.draw_text_centered(self, px + pw * 0.5, py + 178.0, "   ".join(tags),
 				GameTheme.GOLD, 2, 1)

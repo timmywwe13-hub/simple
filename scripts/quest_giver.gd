@@ -28,6 +28,10 @@ func interact() -> void:
 	s["coins"].text = "COINS %d" % GameState.coins
 	var intro := UILib.label(body, "FINISH QUESTS - RETURN HERE TO CLAIM REWARDS", 14, Color("#a8c0cc"))
 	intro.custom_minimum_size = Vector2(0.0, 24.0)
+	if GameState.event_active():
+		var event_l := UILib.label(body, "2X COIN EVENT: REWARDS ARE DOUBLED FOR %s" % GameState.event_time_text(),
+				13, GameTheme.GOLD)
+		event_l.custom_minimum_size = Vector2(0.0, 22.0)
 	for q in GameState.quests:
 		var done := bool(q.get("done", false))
 		var claimed := bool(q.get("claimed", false))
@@ -41,7 +45,7 @@ func interact() -> void:
 		var prog_text := "DONE" if done else "PROGRESS %d / %d" % [int(q.get("progress", 0)), need]
 		var prog_l := UILib.label(row, prog_text, 12, GameTheme.LEAF if done else Color("#e9d8a8"))
 		prog_l.position = Vector2(12.0, 41.0)
-		var reward_l := UILib.label(row, "REWARD %d" % int(q.get("reward", 0)), 13, UILib.GOLD, true)
+		var reward_l := UILib.label(row, "REWARD %d" % GameState.quest_reward(q), 13, UILib.GOLD, true)
 		reward_l.position = Vector2(300.0, 8.0)
 		var state_l := UILib.label(row, "CLAIMED" if claimed else ("READY!" if done else "ACTIVE"), 12,
 				Color("#8d9aa6") if claimed else Color("#a8c0cc"))

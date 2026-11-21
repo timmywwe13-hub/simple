@@ -37,6 +37,7 @@ godot --headless --path . --export-release Web build/web/index.html
 | Open the Fish Index | `I` (from the menu or right on the water) |
 | Pause / back | `Escape` (pauses while fishing; closes menus) |
 | Stats and sound | menu button `STATS & SOUND` |
+| What's New / patch notes | menu or pause button `WHAT'S NEW`, `U` in Town |
 | Quit | close window |
 
 **On touchscreens** (phones/tablets) an on-screen pad and buttons appear:
@@ -73,6 +74,15 @@ res://scripts/ui_lib.gd  # Tiny code-only UI toolkit
 res://scripts/touch_controls.gd # On-screen touch controls for phones/tablets
 res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 ```
+
+## Updates (v1.6)
+
+- **2x coin event (12 hours)** - every coin you earn is doubled: fish sold at the Tackle Shop and Fish Market, plus quest rewards. The window starts on your first launch of this update and is saved, so it keeps counting down between sessions. The HUD, start screen, Town, market, quest board and catch popup all show the doubled values and the time left
+- **Smoother walking** - the fisher and the Town walker now ease into a walk and ease back to a stop, alternate their feet with a proper foot lift, swing their arms, bob on each step and kick up small dust puffs. Both characters finally have a soft ground shadow
+- **Facing fixed** - the Town walker turns to face the direction of travel, and the fisher's head/eye follows the walk instead of always staring right
+- **What's New screen** - a proper patch-notes panel with the current update, reachable from the main menu, the pause menu, or `U` in Town. The menu shows a `WHAT'S NEW!` badge until the notes have been read once (saved with your progress)
+- **Walking bug fixes** - the Town walker can no longer wander off-screen, drift behind buildings, or get teleported back to the middle of town when the browser window resizes. Casting now plants the feet instead of freezing mid-stride
+- **Other fixes** - opening the Fish Index no longer risks starting a cast with the same click; selling an empty bucket explains itself instead of paying 0 coins; the General Store's region-pass and stat rows are correctly indented; the Fisher Market and quest board show the event-boosted payouts
 
 ## Updates (v1.5)
 

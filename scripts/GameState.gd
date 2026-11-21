@@ -22,6 +22,14 @@ var stats := {
 	"biggest_fish": 0.0, "biggest_name": "", "days_fished": 0,
 }
 var muted := false
+## The version whose What's New screen has been read (shown once with a
+## badge on the menu until opened).
+var seen_version := ""
+## 2x coin launch event: every coin earned is doubled until this unix
+## timestamp. A brand new save (or an old save without the field) starts
+## its own 12-hour window on first load, so nobody misses it.
+const EVENT_SECONDS := 12 * 3600
+var event_until := 0
 ## Coconut Isle progression: axe ownership, coconut inventory and unix
 ## timestamps for felled palms. Timers keep running between sessions.
 var has_axe := false
@@ -280,12 +288,16 @@ func _process(dt: float) -> void:
 
 
 func _ready() -> void:
+	if event_until <= 0:
+		event_until = int(Time.get_unix_time_from_system()) + EVENT_SECONDS
 	_load_game()
 	_setup_audio()
 
 func save_game() -> void:
 	var data := {
 		"coins": coins,
+		"seen_version": seen_version,
+		"event_until": event_until,
 		"inventory": inventory,
 		"index": index,
 		"gear": gear,
@@ -308,6 +320,10 @@ func save_game() -> void:
 		file.close()
 
 func _load_game() -> void:
+	# A brand new save (or a save from before the event existed) starts its
+	# own 12 hour window. An already-expired timestamp is kept as expired.
+	if event_until <= 0:
+		event_until = int(Time.get_unix_time_from_system()) + EVENT_SECONDS
 	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
 	if not file:
 		_init_index()
@@ -322,6 +338,13 @@ func _load_game() -> void:
 		save_game()
 		return
 	coins = int(data.get("coins", 50))
+	seen_version = String(data.get("seen_version", ""))
+	# Old saves have no event timestamp yet - give them the full window and
+	# persist the deadline together with the rest of the loaded state below.
+	event_until = int(data.get("event_until", 0))
+	var new_event := event_until <= 0
+	if new_event:
+		event_until = int(Time.get_unix_time_from_system()) + EVENT_SECONDS
 	inventory = data.get("inventory", [])
 	index = data.get("index", {})
 	gear = data.get("gear", {"rod": "rod_stick", "line": "line_nylon", "bait": "",
@@ -353,6 +376,8 @@ func _load_game() -> void:
 	# fresh quest metadata + any missing (new) quests, keeping saved progress
 	quests = _merge_quests(data.get("quests", []))
 	_init_index()
+	if new_event:
+		save_game()
 
 ## Build the live quest list from QUEST_DEFS, carrying progress / done /
 ## claimed over from the saved list (old saves gain the new quests).
@@ -372,6 +397,26 @@ func _merge_quests(saved: Array) -> Array:
 			q["done"] = false
 		out.append(q)
 	return out
+
+## --- 2x coin event ---------------------------------------------------
+func event_active() -> bool:
+	return event_until > int(Time.get_unix_time_from_system())
+
+func event_seconds_left() -> int:
+	return maxi(0, event_until - int(Time.get_unix_time_from_system()))
+
+## "11:59:32" countdown for the HUD and the What's New screen.
+func event_time_text() -> String:
+	var left := event_seconds_left()
+	return "%d:%02d:%02d" % [left / 3600, (left / 60) % 60, left % 60]
+
+func money_mult() -> float:
+	return 2.0 if event_active() else 1.0
+
+## Quest rewards pay out doubled during the event too, so the board shows
+## the amount the player will actually receive.
+func quest_reward(q: Dictionary) -> int:
+	return int(round(float(q.get("reward", 0)) * money_mult()))
 
 func _init_index() -> void:
 	var ids := FishDB.all_ids()
@@ -480,7 +525,8 @@ func is_hot_demand(fish_id: String) -> bool:
 func streak_sale_mult() -> float:
 	return 1.0 + float(mini(int(stats.get("current_streak", 0)), 10)) * 0.02
 
-## Combined multiplier from daily catch, daily demand, perfect catch and streak.
+## Combined multiplier from daily catch, daily demand, perfect catch,
+## streak and the 2x coin event.
 func sale_mult(fish_id: String, perfect := false) -> float:
 	var m := streak_sale_mult()
 	if is_daily_catch(fish_id):
@@ -489,7 +535,7 @@ func sale_mult(fish_id: String, perfect := false) -> float:
 		m *= 1.3
 	if perfect:
 		m *= 1.15
-	return m
+	return m * money_mult()
 
 ## Final value used by the market, the Tackle Shop and the catch popup.
 func sale_value(fish_id: String, weight: float, mult := 1.0, perfect := false) -> int:
@@ -617,7 +663,7 @@ func claim_quest(qid: String) -> int:
 		if not bool(q.get("done", false)) or bool(q.get("claimed", false)):
 			return 0
 		q["claimed"] = true
-		var reward := int(q.get("reward", 0))
+		var reward := quest_reward(q)
 		add_coins(reward)
 		save_game()
 		return reward

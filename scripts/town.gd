@@ -16,6 +16,7 @@ extends Node2D
 ##   └─ Tunnel (Node2D, tunnel.gd -> res://main.tscn)
 
 const PixFont := preload("res://scripts/pixel_font.gd")
+const ChangelogLib := preload("res://scripts/changelog.gd")
 const TouchControls := preload("res://scripts/touch_controls.gd")
 
 var view_size := Vector2(960.0, 540.0)
@@ -31,6 +32,8 @@ var current: Interactable = null
 var active_panel: Control
 var toast_text := ""
 var toast_timer := 0.0
+var updates_btn: Button
+var updates_prev := false
 ## Physical-key edges for the typed `2222` testing cheat (Town has no
 ## number-key shortcuts of its own, so the digits are free here).
 var digit_prev := {}
@@ -50,7 +53,39 @@ func _ready() -> void:
 	_spawn_interactables()
 	_spawn_player()
 	_spawn_tunnel()
+	_build_updates_button()
 	GameState.play_sound("ui")
+
+
+## Always-visible What's New button in the top-right corner, plus the U key
+## for keyboard players. The badge marks notes this version has not shown
+## yet.
+func _build_updates_button() -> void:
+	updates_btn = UILib.button(null, _updates_label(), _on_updates, 14,
+			GameTheme.PANEL_LIGHT, Color("#55708a"), Color("#2c3d4d"), UILib.CREAM,
+			Vector2(166.0, 34.0))
+	ui_layer.add_child(updates_btn)
+	updates_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	updates_btn.offset_left = -190.0
+	updates_btn.offset_top = 52.0
+	updates_btn.offset_right = -24.0
+	updates_btn.offset_bottom = 86.0
+
+
+func _updates_label() -> String:
+	return "WHAT'S NEW!" if ChangelogLib.is_unseen() else "WHAT'S NEW"
+
+
+func _on_updates() -> void:
+	GameState.play_sound("ui")
+	ChangelogLib.mark_seen()
+	if updates_btn != null:
+		updates_btn.text = _updates_label()
+	var s := TownUI.screen(ui_layer, "WHAT'S NEW")
+	var body: VBoxContainer = s["body"]
+	s["coins"].text = "V%s" % ChangelogLib.VERSION
+	ChangelogLib.fill(body)
+	open_panel(s["root"])
 
 
 func _relayout() -> void:
@@ -59,8 +94,18 @@ func _relayout() -> void:
 	for entry in layout:
 		var node: Interactable = entry["node"]
 		node.position = Vector2(view_size.x * float(entry["x"]), ground_y + float(entry["y"]))
-	player.position = Vector2(view_size.x * 0.45, ground_y + 42.0)
+	# Keep the walker where it is when the window resizes (the old code
+	# teleported it back to the middle of town) and only clamp it into the
+	# new walkable lane.
+	if player != null:
+		player.set_bounds(_walk_bounds())
+	else:
+		_spawn_player()
 	tunnel.position = Vector2(70.0, ground_y + 42.0)
+
+
+func _walk_bounds() -> Rect2:
+	return Rect2(28.0, ground_y + 20.0, maxf(40.0, view_size.x - 56.0), 54.0)
 
 
 func _spawn_interactables() -> void:
@@ -85,6 +130,7 @@ func _spawn_player() -> void:
 	player = TownPlayer.new()
 	player.name = "TownPlayer"
 	player.position = Vector2(view_size.x * 0.45, ground_y + 42.0)
+	player.set_bounds(_walk_bounds())
 	add_child(player)
 
 
@@ -99,6 +145,12 @@ func _spawn_tunnel() -> void:
 
 func _process(dt: float) -> void:
 	_track_cheat_digits()
+	# U opens the patch notes from anywhere in town (not while typing a code
+	# or a panel is already open).
+	var u_now := Input.is_physical_key_pressed(KEY_U)
+	if u_now and not updates_prev and active_panel == null:
+		_on_updates()
+	updates_prev = u_now
 	if toast_timer > 0.0:
 		toast_timer = maxf(0.0, toast_timer - dt)
 		if toast_timer == 0.0:
@@ -192,6 +244,7 @@ func _draw() -> void:
 	_draw_ground(t)
 	_draw_fence()
 	_draw_hud()
+	_draw_event_banner()
 	if toast_text != "":
 		var tw := PixFont.text_width(toast_text, 3)
 		var tx := (view_size.x - tw) * 0.5
@@ -281,7 +334,7 @@ func _draw_fence() -> void:
 func _draw_hud() -> void:
 	_hud_line("COINS %d" % GameState.coins, 12.0, 12.0, GameTheme.GOLD)
 	_hud_line("BUCKET %d/%d" % [GameState.inventory_count(), GameState.bucket_capacity()], 12.0, 40.0, UILib.CREAM)
-	var hint := "WASD / ARROWS - WALK    E - INTERACT    ESC - CLOSE"
+	var hint := "WASD / ARROWS - WALK    E - INTERACT    U - WHAT'S NEW    ESC - CLOSE"
 	PixFont.draw_text_shadowed(self, Vector2((view_size.x - PixFont.text_width(hint, 2)) * 0.5, view_size.y - 24.0),
 			hint, Color("#c8d6e2"), Color("#050a12", 0.6), 2, 1, 1)
 
@@ -291,3 +344,17 @@ func _hud_line(txt: String, x: float, y: float, c: Color) -> void:
 	_pixel_rect(Rect2(x, y, w, 30.0), Color("#141c2c", 0.8))
 	_pixel_rect(Rect2(x, y, w, 3.0), Color("#3b4a63", 0.9))
 	PixFont.draw_text_shadowed(self, Vector2(x + 12.0, y + 7.0), txt, c, Color("#050a12", 0.65), 3, 1, 1)
+
+
+## Gold countdown strip for the 2x coin launch event.
+func _draw_event_banner() -> void:
+	# modal panels dim the world; don't leave a grey banner floating behind them
+	if active_panel != null or not GameState.event_active():
+		return
+	var txt := "2X COINS - %s LEFT" % GameState.event_time_text()
+	var w := PixFont.text_width(txt, 2) + 22.0
+	var x := (view_size.x - w) * 0.5
+	_pixel_rect(Rect2(x, 12.0, w, 26.0), Color("#141c2c", 0.85))
+	_pixel_rect(Rect2(x, 12.0, w, 3.0), GameTheme.GOLD)
+	_pixel_rect(Rect2(x, 35.0, w, 3.0), GameTheme.GOLD.darkened(0.35))
+	PixFont.draw_text_centered(self, view_size.x * 0.5, 18.0, txt, GameTheme.GOLD, 2, 1)

@@ -134,7 +134,8 @@ func _on_craft(id: String) -> void:
 		town.toast("CAN'T CRAFT THAT RIGHT NOW")
 
 
-func _region_passes(body: VBoxContainer) -> void:	for r in ["river", "lake", "ocean"]:
+func _region_passes(body: VBoxContainer) -> void:
+	for r in ["river", "lake", "ocean"]:
 		if GameState.unlocked_regions.has(r):
 			continue
 		var display := String(FishDB.REGION_DISPLAY.get(r, r))
@@ -150,7 +151,8 @@ func _region_passes(body: VBoxContainer) -> void:	for r in ["river", "lake", "oc
 		TownUI.row_button(row, "BUY %d" % cost, _on_unlock.bind(r))
 
 
-func _stat_line(category: String, d: Dictionary) -> String:	match category:
+func _stat_line(category: String, d: Dictionary) -> String:
+	match category:
 		"rods": return "SPEED: %.1fx  WINDOW: %.2f" % [float(d.get("reel_speed", 1.0)), float(d.get("timing_window", 0.2))]
 		"lines": return "KEEP: %.0f%%" % [(1.0 - float(d.get("escape_chance", 0.3))) * 100.0]
 		"baits":

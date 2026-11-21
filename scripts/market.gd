@@ -31,6 +31,10 @@ func interact() -> void:
 	s["coins"].text = "COINS %d" % GameState.coins
 	var intro := UILib.label(body, "SELL YOUR CATCH - MARKET +15%%, BOAT BONUS, DAILY DEMAND AND STREAK BONUSES INCLUDED", 14, Color("#a8c0cc"))
 	intro.custom_minimum_size = Vector2(0.0, 24.0)
+	if GameState.event_active():
+		var event_l := UILib.label(body, "2X COIN EVENT: EVERY FISH SELLS FOR DOUBLE FOR %s" % GameState.event_time_text(),
+				13, GameTheme.GOLD)
+		event_l.custom_minimum_size = Vector2(0.0, 22.0)
 	var daily_id := GameState.daily_fish_id()
 	if daily_id != "":
 		var daily_l := UILib.label(body, "DAILY CATCH: %s PAYS x2   |   HOT DEMAND PAYS +30%%" % String(FishDB.fish_data(daily_id).get("name", daily_id)).to_upper(),
