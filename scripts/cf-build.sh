@@ -27,6 +27,11 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 cp -R "$SRC"/. "$OUT"/
 
+# The favicon lives at res://fishing.svg; the Godot web export does not emit it as
+# a standalone file, so copy the project copy into the site (referenced by the
+# <link rel="icon" type="image/svg+xml"> in export_presets.cfg head_include).
+cp fishing.svg "$OUT/fishing.svg"
+
 # Split the wasm into pieces the asset server will accept.
 split -b "$CHUNK" -d -a 1 "$OUT/index.wasm" "$OUT/index.wasm.part"
 rm -f "$OUT/index.wasm"

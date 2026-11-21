@@ -13,7 +13,11 @@ config_version=5
 config/name="simple"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
-config/icon="res://icon.svg"
+config/icon="res://fishing.svg"
+boot_splash/image="res://fishing.svg"
+boot_splash/bg_color=Color(0.0784314, 0.1254902, 0.2313726, 1)
+boot_splash/fullsize=false
+boot_splash/minimum_display_time=0
 
 [autoload]
 
