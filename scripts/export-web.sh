@@ -28,6 +28,21 @@ fi
 mkdir -p build/web
 "$GODOT" --headless --path . --export-release Web build/web/index.html
 
+# Force a newly deployed worker to take over from an older cached build.
+# This needs Python, but a missing interpreter is only a warning: the game
+# build itself is already complete.
+PYTHON=""
+if command -v python3 >/dev/null 2>&1; then
+	PYTHON=python3
+elif command -v python >/dev/null 2>&1; then
+	PYTHON=python
+fi
+if [ -n "$PYTHON" ]; then
+	"$PYTHON" scripts/patch_web_build.py
+else
+	echo "warning: python not found; skipping the stale-PWA cache patch." >&2
+fi
+
 # export_presets.cfg references fishing.svg in the HTML head, but the exporter
 # does not place the SVG next to the exported page, so copy it in.
 cp fishing.svg build/web/fishing.svg

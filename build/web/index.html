@@ -216,6 +216,29 @@ const engine = new Engine(GODOT_CONFIG);
 	}
 }());
 		</script>
-	</body>
+	<!-- CCF_PWA_UPDATE -->
+<script>
+(function () {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.getRegistration().then(function (reg) {
+    if (!reg) return;
+    function arm(worker) {
+      if (!worker || worker.state === 'redundant') return;
+      if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+        worker.postMessage('update');
+        return;
+      }
+      if (!worker.__ccfArmed) {
+        worker.__ccfArmed = true;
+        worker.addEventListener('statechange', function () { arm(worker); });
+      }
+    }
+    if (reg.waiting) arm(reg.waiting);
+    reg.addEventListener('updatefound', function () { arm(reg.installing); });
+    reg.update();
+  });
+})();
+</script>
+</body>
 </html>
 
