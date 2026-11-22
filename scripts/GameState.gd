@@ -1,6 +1,7 @@
 extends Node
 
 const CasinoDBLib := preload("res://scripts/casino_db.gd")
+const HarvestCardsLib := preload("res://scripts/harvest_cards.gd")
 
 ## Persistent game state: coins, inventory, fish index, gear, quests.
 ## Saved to user://save.json via FileAccess store_var/get_var.
@@ -68,6 +69,37 @@ const DEFAULT_SETTINGS := {
 }
 var settings: Dictionary = DEFAULT_SETTINGS.duplicate(true)
 
+## --- Harvest Feast (v1.9) --------------------------------------------
+## Persisted event state. Merged over these defaults on load (like stats),
+## so a save from before the event gains a sane empty album.
+const HARVEST_DEFAULTS := {
+	"tokens": 0,
+	"donated": 0,
+	"table_stage": 0,
+	"completed": false,
+	"grateful_seen": false,
+	"caught_harvest": 0,
+	"cards": {},
+	"packs_opened": 0,
+	"pity": 0,
+	"boat_claimed": false,
+	"last_daily_request": "",
+	"free_pack_day": "",
+	"boat_exclusive_year": false,
+	# bookkeeping beyond the published state list
+	"table_rewarded": false,
+	"token_day": "",
+	"tokens_today": 0,
+}
+const HARVEST_TABLE_STAGES := [3, 8, 15, 25]
+const HARVEST_PACK_COST := 20
+const HARVEST_TOKEN_DAY_CAP := 120
+var harvest: Dictionary = HARVEST_DEFAULTS.duplicate(true)
+## Dev override wired to the 2222 cheat so the event can be tested off-season.
+var force_harvest := false
+var _season_open_cache := false
+var _season_check_timer := 0.0
+
 ## --- Save safety -----------------------------------------------------
 ## save_version lets future builds migrate old saves. Writes go to a
 ## temp file first and the previous save is kept as a .bak, so a crash
@@ -83,6 +115,7 @@ var _saved_toast_cd := 0.0
 
 signal saved
 signal coins_gained(amount: int)
+signal harvest_boat_awarded
 
 ## --- Audio director (v1.7) ------------------------------------------
 ## Two music players crossfade between procedurally baked loops, one per
@@ -173,6 +206,16 @@ const QUEST_DEFS := [
 		"kind": "casino_win", "target": 1, "need": 1, "reward": 50},
 	{"id": "high_roller", "title": "High Roller", "desc": "Win 300 coins at the Lucky Lily.",
 		"kind": "casino_won", "target": 300, "need": 300, "reward": 200},
+	# --- Harvest Feast seasonal quests (v1.9) ---
+	{"id": "full_plate", "title": "A Full Plate", "desc": "Catch 6 Harvest Feast fish.",
+		"kind": "harvest_catch", "target": 6, "need": 6, "reward": 40,
+		"token_reward": true, "season": "harvest"},
+	{"id": "potluck", "title": "Potluck", "desc": "Donate 6 fish to the Harvest Table.",
+		"kind": "harvest_donate", "target": 6, "need": 6, "reward": 90,
+		"token_reward": true, "season": "harvest"},
+	{"id": "grand_tom", "title": "The Grand Tom", "desc": "Catch The Grand Tom by night.",
+		"kind": "catch_species", "target": "grand_tom", "need": 1, "reward": 200,
+		"token_reward": true, "season": "harvest"},
 ]
 
 var quests: Array = []
@@ -289,6 +332,21 @@ func grant_everything() -> void:
 	total_caught = maxi(total_caught, index.size())
 	# a handful of top-value fish in the bucket so selling can be tested
 	var pool := FishDB.all_ids()
+	# Force the Harvest Feast on and hand over a nearly-finished album so
+	# packs, the boat award and the seasonal screens can all be tested.
+	force_harvest = true
+	SeasonTheme.apply("harvest")
+	_season_open_cache = true
+	harvest = HARVEST_DEFAULTS.duplicate(true)
+	harvest["tokens"] = 999
+	harvest["donated"] = 24
+	harvest["table_stage"] = 4
+	var hcards: Dictionary = {}
+	var hids: Array = HarvestCardsLib.ALL_IDS
+	for i in range(maxi(0, hids.size() - 2)):
+		hcards[String(hids[i])] = 1
+	harvest["cards"] = hcards
+	harvest["caught_harvest"] = 5
 	pool.sort_custom(func(a, b: String) -> bool:
 		return int(FishDB.fish_data(String(a)).get("coin", 0)) > int(FishDB.fish_data(b).get("coin", 0)))
 	for i in range(mini(6, pool.size())):
@@ -350,6 +408,7 @@ func _process(dt: float) -> void:
 	_tick_fade(dt)
 	_tick_ambience(dt)
 	_tick_music(dt)
+	_tick_season(dt)
 	if cheat_timer <= 0.0:
 		return
 	cheat_timer = maxf(0.0, cheat_timer - dt)
@@ -554,6 +613,11 @@ func _ready() -> void:
 		event_until = int(Time.get_unix_time_from_system()) + EVENT_SECONDS
 	_build_fade()
 	_load_game()
+	# Boot the palette for the season the save loaded into. The event check
+	# also runs on a timer, so a mid-session Dec 1 rollover reverts cleanly
+	# and the next screen that opens is rebuilt in the normal palette.
+	_season_open_cache = harvest_season_open()
+	SeasonTheme.apply("harvest" if _season_open_cache else "default")
 	_ensure_buses()
 	_setup_audio()
 	apply_display_settings()
@@ -618,6 +682,13 @@ func _save_data() -> Dictionary:
 		"coconuts": coconuts,
 		"chopped_palms": chopped_palms,
 		"owned_rods": ShopDB.owned_rod_ids(),
+		"owned_gear": {
+			"lines": ShopDB.owned_ids("lines"),
+			"buckets": ShopDB.owned_ids("buckets"),
+			"lanterns": ShopDB.owned_ids("lanterns"),
+		},
+		"harvest": harvest,
+		"force_harvest": force_harvest,
 	}
 
 ## Write through a temp file, park the previous save as a .bak, then swap
@@ -740,15 +811,38 @@ func _load_game() -> void:
 	var saved_rods: Variant = data.get("owned_rods", [])
 	if typeof(saved_rods) == TYPE_ARRAY:
 		ShopDB.mark_owned_rods(saved_rods)
+	var saved_gear: Variant = data.get("owned_gear", {})
+	if typeof(saved_gear) == TYPE_DICTIONARY:
+		for cat in ["lines", "buckets", "lanterns"]:
+			var ids_v: Variant = saved_gear.get(cat, [])
+			if typeof(ids_v) == TYPE_ARRAY:
+				ShopDB.mark_owned(cat, ids_v)
 	var saved_stats: Variant = data.get("stats", {})
 	if typeof(saved_stats) == TYPE_DICTIONARY:
 		for k in saved_stats.keys():
 			stats[k] = saved_stats[k]
 	var saved_baits: Variant = data.get("bait_counts", {})
 	bait_counts = saved_baits if typeof(saved_baits) == TYPE_DICTIONARY else {}
+	# Harvest Feast state: merge over the defaults so a pre-v1.9 save gains
+	# an empty album without losing anything.
+	harvest = HARVEST_DEFAULTS.duplicate(true)
+	var saved_harvest: Variant = data.get("harvest", {})
+	if typeof(saved_harvest) == TYPE_DICTIONARY:
+		for k in HARVEST_DEFAULTS.keys():
+			if saved_harvest.has(k):
+				harvest[k] = saved_harvest[k]
+	force_harvest = bool(data.get("force_harvest", false))
+	if typeof(harvest.get("cards", {})) != TYPE_DICTIONARY:
+		harvest["cards"] = {}
 	# fresh quest metadata + any missing (new) quests, keeping saved progress
 	quests = _merge_quests(data.get("quests", []))
 	_init_index()
+	# Repair an album that reached 20/20 without the award (an old/hand-edited
+	# save): the boat is always granted automatically, never claimable.
+	if harvest_owned_count() >= HarvestCardsLib.ALL_IDS.size():
+		harvest["completed"] = true
+		if not bool(harvest.get("boat_claimed", false)):
+			award_harvest_boat()
 	if new_event:
 		request_save()
 
@@ -843,6 +937,10 @@ func reset_progress() -> void:
 	seen_version = ""
 	event_until = int(Time.get_unix_time_from_system()) + EVENT_SECONDS
 	ShopDB.reset_owned()
+	harvest = HARVEST_DEFAULTS.duplicate(true)
+	force_harvest = false
+	_season_open_cache = false
+	SeasonTheme.revert()
 	quests = _merge_quests([])
 	_init_index()
 	session_started = false
@@ -865,6 +963,342 @@ func _merge_quests(saved: Array) -> Array:
 		if int(q["progress"]) < quest_need(q):
 			q["done"] = false
 		out.append(q)
+	return out
+
+## --- Harvest Feast (v1.9) --------------------------------------------
+## Season gate. The window straddles the month change (Nov 22 00:00 to
+## Dec 1 23:59 local), so the test is explicit - never a bare month compare.
+func harvest_season_open() -> bool:
+	if force_harvest:
+		return true
+	return _calendar_harvest_open()
+
+func _calendar_harvest_open() -> bool:
+	var d := Time.get_date_dict_from_system()
+	var m := int(d.get("month", 1))
+	var day := int(d.get("day", 1))
+	return (m == 11 and day >= 22) or (m == 12 and day == 1)
+
+## Check the clock a couple of times a second, so a mid-session close
+## reverts the palette and locks the pack buttons on the next screen open.
+func _tick_season(dt: float) -> void:
+	_season_check_timer -= dt
+	if _season_check_timer > 0.0:
+		return
+	_season_check_timer = 2.0
+	var open := harvest_season_open()
+	if open == _season_open_cache:
+		return
+	_season_open_cache = open
+	SeasonTheme.apply("harvest" if open else "default")
+
+## Seconds until Dec 1 23:59:59 local. Built from the calendar date and the
+## time of day so it never depends on the local UTC offset.
+func harvest_seconds_left() -> int:
+	if not harvest_season_open():
+		return 0
+	if force_harvest and not _calendar_harvest_open():
+		return 10 * 86400
+	var d := Time.get_date_dict_from_system()
+	var m := int(d.get("month", 1))
+	var day := int(d.get("day", 1))
+	var t := Time.get_time_dict_from_system()
+	var left_today := 86399 - (int(t.get("hour", 0)) * 3600 + int(t.get("minute", 0)) * 60
+			+ int(t.get("second", 0)))
+	if m == 12:
+		return maxi(0, left_today)
+	return left_today + (30 - day + 1) * 86400
+
+func harvest_days_left() -> int:
+	if not harvest_season_open():
+		return 0
+	return int(ceil(float(harvest_seconds_left()) / 86400.0))
+
+func harvest_final_days() -> bool:
+	return harvest_season_open() and harvest_days_left() <= 3
+
+## "CARDS CLOSE IN 6d" / "CARDS CLOSE TONIGHT" / closed copy.
+func harvest_deadline_text() -> String:
+	if not harvest_season_open():
+		return "PACKS CLOSED UNTIL NOV 22"
+	var d := Time.get_date_dict_from_system()
+	if _calendar_harvest_open() and int(d.get("month", 1)) == 12:
+		return "CARDS CLOSE TONIGHT"
+	return "CARDS CLOSE IN %dd" % harvest_days_left()
+
+func harvest_time_text() -> String:
+	var left := harvest_seconds_left()
+	if left <= 0:
+		return "CLOSED"
+	if left < 86400:
+		return "%d:%02d:%02d" % [left / 3600, (left / 60) % 60, left % 60]
+	return "%dd %02dh" % [left / 86400, (left % 86400) / 3600]
+
+func harvest_tokens() -> int:
+	return int(harvest.get("tokens", 0))
+
+func harvest_spend_tokens(amount: int) -> bool:
+	if amount <= 0:
+		return true
+	if harvest_tokens() < amount:
+		return false
+	harvest["tokens"] = harvest_tokens() - amount
+	if AUTO_SAVE:
+		request_save()
+	return true
+
+## Add event tokens. Normal earnings stop at the ~120/day soft cap; dupe
+## refunds pass `bypass_cap` so the album economy always pays out.
+func add_tokens(amount: int, bypass_cap := false) -> int:
+	if amount <= 0:
+		return 0
+	var today := Time.get_date_string_from_system()
+	if String(harvest.get("token_day", "")) != today:
+		harvest["token_day"] = today
+		harvest["tokens_today"] = 0
+	var granted := amount
+	if not bypass_cap:
+		var used := int(harvest.get("tokens_today", 0))
+		granted = clampi(amount, 0, maxi(0, HARVEST_TOKEN_DAY_CAP - used))
+		harvest["tokens_today"] = used + granted
+	if granted <= 0:
+		return 0
+	harvest["tokens"] = harvest_tokens() + granted
+	play_sound("bell")
+	if AUTO_SAVE:
+		request_save()
+	return granted
+
+func harvest_has_card(id: String) -> bool:
+	return int((harvest.get("cards", {}) as Dictionary).get(id, 0)) > 0
+
+func harvest_owned_count() -> int:
+	var n := 0
+	var cards: Dictionary = harvest.get("cards", {})
+	for id in cards.keys():
+		if int(cards[id]) > 0:
+			n += 1
+	return n
+
+func harvest_spares_count() -> int:
+	var n := 0
+	var cards: Dictionary = harvest.get("cards", {})
+	for id in cards.keys():
+		n += maxi(0, int(cards[id]) - 1)
+	return n
+
+func harvest_cards_left() -> int:
+	return maxi(0, HarvestCardsLib.ALL_IDS.size() - harvest_owned_count())
+
+## Table growth is driven by donated fish (the saved stage is kept in sync
+## so the town scene can draw the right trestle table without recomputing).
+func harvest_table_stage() -> int:
+	var d := int(harvest.get("donated", 0))
+	var stage := 0
+	for i in range(HARVEST_TABLE_STAGES.size()):
+		if d >= int(HARVEST_TABLE_STAGES[i]):
+			stage = i + 1
+	harvest["table_stage"] = clampi(stage, 0, 4)
+	return int(harvest["table_stage"])
+
+func harvest_next_stage_donation() -> int:
+	var stage := harvest_table_stage()
+	if stage >= HARVEST_TABLE_STAGES.size():
+		return -1
+	return int(HARVEST_TABLE_STAGES[stage])
+
+## Donate one fish from the bucket to the town table. Pays tokens scaled to
+## the fish value, grows the table and hands out the completion bonus pack.
+func donate_fish(inv_index: int) -> Dictionary:
+	var out := {"ok": false, "tokens": 0, "stage": 0, "bonus_pack": false, "reason": ""}
+	if not harvest_season_open():
+		out["reason"] = "closed"
+		return out
+	if inv_index < 0 or inv_index >= inventory.size():
+		out["reason"] = "empty"
+		return out
+	var item: Dictionary = inventory[inv_index]
+	var fid := String(item.get("fish_id", ""))
+	var value := coin_value(fid, float(item.get("weight", 0.0)))
+	var tok := clampi(int(round(float(value) * 0.12)), 2, 18)
+	if String(FishDB.fish_data(fid).get("season", "")) == "harvest":
+		tok = int(round(float(tok) * 1.5))
+	inventory.remove_at(inv_index)
+	harvest["donated"] = int(harvest.get("donated", 0)) + 1
+	harvest["grateful_seen"] = true
+	var old_stage := harvest_table_stage()
+	var granted := add_tokens(tok)
+	var new_stage := harvest_table_stage()
+	out["tokens"] = granted
+	out["stage"] = new_stage
+	out["ok"] = true
+	if new_stage >= 4 and old_stage < 4 and not bool(harvest.get("table_rewarded", false)):
+		harvest["table_rewarded"] = true
+		out["bonus_pack"] = true
+	_check_quests("donate", "", {"coins": tok})
+	play_sound("bell")
+	if AUTO_SAVE:
+		save_game()
+	return out
+
+func harvest_free_pack_available() -> bool:
+	return harvest_season_open() and String(harvest.get("free_pack_day", "")) \
+			!= Time.get_date_string_from_system()
+
+func harvest_claim_free_pack() -> Dictionary:
+	if not harvest_free_pack_available():
+		return {"error": "daily_used", "cards": []}
+	harvest["free_pack_day"] = Time.get_date_string_from_system()
+	harvest["last_daily_request"] = harvest["free_pack_day"]
+	return harvest_open_pack(0)
+
+func harvest_buy_pack() -> Dictionary:
+	return harvest_open_pack(HARVEST_PACK_COST)
+
+## Roll 3 cards. Cards are opened immediately and never sit as an item, so
+## nothing can be stranded at the Dec 1 close.
+func harvest_open_pack(cost := HARVEST_PACK_COST) -> Dictionary:
+	var out := {"error": "", "cards": [], "new_ids": [], "refund": 0, "new_count": 0,
+		"completed": false, "awarded": false}
+	if not harvest_season_open():
+		out["error"] = "closed"
+		return out
+	if cost > 0:
+		if not harvest_spend_tokens(cost):
+			out["error"] = "tokens"
+			return out
+	var had_boat := bool(harvest.get("boat_claimed", false))
+	var fresh: Array = HarvestCardsLib.new_ids(harvest.get("cards", {}))
+	var picks: Array = []
+	var picked := {}
+	for slot in range(3):
+		var cid := ""
+		if slot == 0 and not fresh.is_empty():
+			cid = String(fresh[randi() % fresh.size()])
+		else:
+			cid = _roll_harvest_card(picked)
+		if cid == "":
+			cid = _roll_harvest_card(picked)
+		if cid == "":
+			break
+		picks.append(cid)
+		picked[cid] = true
+		fresh.erase(cid)
+	harvest["packs_opened"] = int(harvest.get("packs_opened", 0)) + 1
+	var had_new := false
+	for cid in picks:
+		var info := harvest_grant_card(String(cid))
+		if bool(info.get("new", false)):
+			had_new = true
+			out["new_count"] = int(out["new_count"]) + 1
+			out["new_ids"].append(String(cid))
+		out["refund"] = int(out["refund"]) + int(info.get("refund", 0))
+		out["cards"].append(HarvestCardsLib.card(String(cid)))
+	# Hard pity safety net: after six new-card-less packs, the next pack is
+	# forced to contain a fresh card if any remain.
+	var pity := 0 if had_new else int(harvest.get("pity", 0)) + 1
+	if pity >= 6 and not HarvestCardsLib.new_ids(harvest.get("cards", {})).is_empty():
+		pity = 0
+	harvest["pity"] = pity
+	out["completed"] = bool(harvest.get("completed", false))
+	out["awarded"] = (not had_boat) and bool(harvest.get("boat_claimed", false))
+	if AUTO_SAVE:
+		save_game()
+	return out
+
+func _roll_harvest_card(excluded: Dictionary) -> String:
+	var roll := randf() * 100.0
+	var rarity := "Common"
+	if roll < 0.5:
+		rarity = "Legendary"
+	elif roll < 4.0:
+		rarity = "Epic"
+	elif roll < 17.0:
+		rarity = "Rare"
+	elif roll < 45.0:
+		rarity = "Uncommon"
+	var candidates: Array = []
+	for id in HarvestCardsLib.ids_of_rarity(rarity):
+		if not excluded.has(id):
+			candidates.append(id)
+	if candidates.is_empty():
+		for id in HarvestCardsLib.ALL_IDS:
+			if not excluded.has(id):
+				candidates.append(id)
+	if candidates.is_empty():
+		return ""
+	return String(candidates[randi() % candidates.size()])
+
+## Register one card. Duplicates stack as SPARES and refund 5 tokens.
+func harvest_grant_card(id: String) -> Dictionary:
+	var out := {"id": id, "new": false, "refund": 0}
+	if not HarvestCardsLib.CARDS.has(id):
+		return out
+	var cards: Dictionary = harvest.get("cards", {})
+	var count := int(cards.get(id, 0))
+	if count > 0:
+		cards[id] = count + 1
+		harvest["cards"] = cards
+		harvest["tokens"] = harvest_tokens() + 5
+		out["refund"] = 5
+		play_sound("coin")
+	else:
+		cards[id] = 1
+		harvest["cards"] = cards
+		out["new"] = true
+		play_sound("bell")
+	if harvest_owned_count() >= HarvestCardsLib.ALL_IDS.size():
+		harvest["completed"] = true
+		if award_harvest_boat():
+			out["awarded"] = true
+	if AUTO_SAVE:
+		request_save()
+	return out
+
+## The Harvest Queen is granted once, automatically at 20/20. It is stored
+## as a normal owned boat id, so an unknown id in an old save just degrades
+## to the raft like any other missing hull.
+func award_harvest_boat() -> bool:
+	if bool(harvest.get("boat_claimed", false)):
+		return false
+	if bool(harvest.get("boat_exclusive_year", false)):
+		var year := int(Time.get_date_dict_from_system().get("year", 0))
+		if year != 2025:
+			return false
+	harvest["boat_claimed"] = true
+	if not owned_boats.has("boat_harvest"):
+		owned_boats.append("boat_harvest")
+	gear["boat"] = "boat_harvest"
+	ShopDB.set_owned("boats", "boat_harvest", true)
+	play_sound("fanfare")
+	harvest_boat_awarded.emit()
+	if AUTO_SAVE:
+		save_game()
+	return true
+
+## Called from record_catch: count seasonal catches and grant the Grand Tom
+## card on the legendary catch (the card is also in the pack pool).
+func harvest_on_catch(fish_id: String) -> void:
+	if not harvest_season_open():
+		return
+	var f := FishDB.fish_data(fish_id)
+	if String(f.get("season", "")) != "harvest":
+		return
+	harvest["caught_harvest"] = int(harvest.get("caught_harvest", 0)) + 1
+	if fish_id == "grand_tom":
+		play_sound("gobble")
+		harvest_grant_card("grand_tom")
+	if AUTO_SAVE:
+		request_save()
+
+## Quests tagged season "harvest" only appear while the event is running.
+func visible_quests() -> Array:
+	if harvest_season_open():
+		return quests
+	var out: Array = []
+	for q in quests:
+		if String(q.get("season", "")) != "harvest":
+			out.append(q)
 	return out
 
 ## --- 2x coin event ---------------------------------------------------
@@ -919,6 +1353,8 @@ func casino_settle(stake: int, payout: int, _game_id: String = "") -> int:
 ## Quest rewards pay out doubled during the event too, so the board shows
 ## the amount the player will actually receive.
 func quest_reward(q: Dictionary) -> int:
+	if bool(q.get("token_reward", false)):
+		return int(q.get("reward", 0))
 	return int(round(float(q.get("reward", 0)) * money_mult()))
 
 func _init_index() -> void:
@@ -953,6 +1389,7 @@ func record_catch(fish_id: String, weight: float, region: String, night := false
 		entry["pb_weight"] = weight
 	entry["region"] = region
 	index[fish_id] = entry
+	harvest_on_catch(fish_id)
 	inventory.append({"fish_id": fish_id, "weight": weight, "region": region,
 		"caught_at": Time.get_ticks_msec(), "perfect": perfect})
 	total_caught += 1
@@ -1122,6 +1559,10 @@ func buy_boat(id: String) -> bool:
 		gear["boat"] = id
 		save_game()
 		return true
+	# Award-only grand prizes can never be bought; they only exist once the
+	# album has handed them over.
+	if bool(d.get("award_only", false)):
+		return false
 	var cost := int(d.get("cost", 0))
 	if not can_afford(cost):
 		return false
@@ -1133,7 +1574,10 @@ func buy_boat(id: String) -> bool:
 	return true
 
 func current_boat() -> Dictionary:
-	return ShopDB.item("boats", String(gear.get("boat", "boat_raft")))
+	var d := ShopDB.item("boats", String(gear.get("boat", "boat_raft")))
+	if d.is_empty():
+		d = ShopDB.item("boats", "boat_raft")
+	return d
 
 ## Best value multiplier across all owned boats (Fish Market multiplies this in).
 func boat_value_mult() -> float:
@@ -1169,18 +1613,23 @@ func claim_quest(qid: String) -> int:
 	for q in quests:
 		if String(q.get("id", "")) != qid:
 			continue
+		if String(q.get("season", "")) == "harvest" and not harvest_season_open():
+			return 0
 		if not bool(q.get("done", false)) or bool(q.get("claimed", false)):
 			return 0
 		q["claimed"] = true
 		var reward := quest_reward(q)
-		add_coins(reward)
+		if bool(q.get("token_reward", false)):
+			add_tokens(reward)
+		else:
+			add_coins(reward)
 		save_game()
 		return reward
 	return 0
 
 func quest_unclaimed_count() -> int:
 	var n := 0
-	for q in quests:
+	for q in visible_quests():
 		if bool(q.get("done", false)) and not bool(q.get("claimed", false)):
 			n += 1
 	return n
@@ -1205,7 +1654,8 @@ func bucket_capacity() -> int:
 	return maxi(1, int(ShopDB.item("buckets", id).get("capacity", 12)))
 
 func region_percent(region: String) -> float:
-	var fishes := FishDB.fish_by_region(region)
+	var season := "harvest" if harvest_season_open() else ""
+	var fishes := FishDB.fish_by_region(region, season)
 	if fishes.size() == 0:
 		return 0.0
 	var caught := 0
@@ -1217,7 +1667,8 @@ func region_percent(region: String) -> float:
 	return float(caught) / float(fishes.size())
 
 func completion_percent() -> float:
-	var all_ids := FishDB.all_ids()
+	var season := "harvest" if harvest_season_open() else ""
+	var all_ids := FishDB.all_ids(season)
 	if all_ids.size() == 0:
 		return 0.0
 	var caught := 0
@@ -1251,6 +1702,23 @@ func buy_item(category: String, id: String) -> bool:
 	# island rods are built from coconuts at the craft bench, never bought
 	if category == "rods" and ShopDB.CRAFTED_RODS.has(id):
 		return false
+	# Seasonal lantern: bought with tokens, only while the feast runs.
+	if String(d.get("season", "")) == "harvest":
+		if not harvest_season_open():
+			return false
+		if bool(d.get("owned", false)):
+			gear[gear_key(category)] = id
+			save_game()
+			return true
+		var tcost := int(d.get("token_cost", 0))
+		if tcost > 0:
+			if not harvest_spend_tokens(tcost):
+				return false
+			ShopDB.set_owned(category, id, true)
+			gear[gear_key(category)] = id
+			play_sound("bell")
+			save_game()
+			return true
 	if category == "baits":
 		var bait_cost := int(d.get("cost", 0))
 		if not can_afford(bait_cost):
@@ -1311,7 +1779,8 @@ func update_bait(_dt: float) -> void:
 ## scale with how many species live in that region (new fish included).
 func quest_need(q: Dictionary) -> int:
 	if String(q.get("kind", "")) == "region_complete":
-		return maxi(1, FishDB.fish_by_region(String(q.get("target", ""))).size())
+		var season := "harvest" if harvest_season_open() else ""
+		return maxi(1, FishDB.fish_by_region(String(q.get("target", "")), season).size())
 	return maxi(1, int(q.get("need", 1)))
 
 ## How many distinct species have been discovered so far.
@@ -1347,7 +1816,8 @@ func _check_quests(kind: String, fish_id: String, data: Dictionary = {}) -> void
 			"region_complete":
 				if kind == "catch":
 					var r := String(q.get("target", ""))
-					q["progress"] = int(region_percent(r) * float(FishDB.fish_by_region(r).size()))
+					var season := "harvest" if harvest_season_open() else ""
+					q["progress"] = int(region_percent(r) * float(FishDB.fish_by_region(r, season).size()))
 			"unique_species":
 				if kind == "catch":
 					q["progress"] = _species_discovered()
@@ -1378,6 +1848,15 @@ func _check_quests(kind: String, fish_id: String, data: Dictionary = {}) -> void
 			"catch_streak":
 				if kind == "catch":
 					q["progress"] = maxi(int(q.get("progress", 0)), int(data.get("streak", 0)))
+			"catch_species":
+				if kind == "catch" and fish_id == String(q.get("target", "")):
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"harvest_catch":
+				if kind == "catch" and String(FishDB.fish_data(fish_id).get("season", "")) == "harvest":
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"harvest_donate":
+				if kind == "donate":
+					q["progress"] = int(q.get("progress", 0)) + 1
 			"casino_win":
 				if kind == "casino" and bool(data.get("win", false)):
 					q["progress"] = int(q.get("progress", 0)) + 1
@@ -1436,6 +1915,11 @@ func _bake_sfx(sfx_name: String) -> AudioStreamWAV:
 		"amb_gull": [900.0, 0.35, 0.10, 4],
 		"amb_spray": [180.0, 0.40, 0.08, 3],
 		"amb_bird": [1200.0, 0.12, 0.07, 4],
+		# Harvest Feast one-shots
+		"leaf": [1100.0, 0.45, 0.09, 3],
+		"bell": [1568.0, 0.60, 0.20, 4],
+		"gobble": [380.0, 0.50, 0.16, 4],
+		"fanfare": [523.0, 1.50, 0.24, 5],
 	}
 	var t: Array = sfx.get(sfx_name, [])
 	if t.size() == 0:
@@ -1469,6 +1953,11 @@ func _bake_sfx(sfx_name: String) -> AudioStreamWAV:
 				# two-tone call (frog / loon / gull), pitch slides down
 				var slide := 1.0 - tpos * 0.35
 				sample = sin(phase * slide) * (0.6 + 0.4 * sin(tpos * TAU * 2.0))
+			5:
+				# four-note fanfare
+				var notes := [1.0, 1.25, 1.5, 2.0]
+				var ni := mini(3, int(tpos * 4.0))
+				sample = sin(phase * float(notes[ni])) * (1.0 - tpos * 0.15) 						+ sin(phase * float(notes[ni]) * 0.5) * 0.25
 		phase += step
 		sample *= vol * env * 0.5
 		bytes.encode_s16(i * 2, int(clampf(sample, -1.0, 1.0) * 32767.0))

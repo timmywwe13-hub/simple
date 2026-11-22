@@ -6,9 +6,23 @@ extends RefCounted
 ## list. Bump VERSION and add a new entry on every release; the menu shows
 ## a "!" badge until the player opens the screen once (GameState.seen_version).
 
-const VERSION := "1.8.1"
+const VERSION := "1.9"
 
 const ENTRIES := [
+	{
+		"version": "1.9",
+		"title": "THE HARVEST FEAST",
+		"items": [
+			"THE HARVEST FEAST - a seasonal event runs Nov 22 00:00 to Dec 1 23:59 local time. The pond, river, lake, Deep Sea and Open Water all turn autumn: gold-and-rust skies, orange-red canopies, straw banks, deep umber water, drifting leaves, pumpkins, corn bundles, straw bales, a lit quay lantern and a heavier cabin smoke. Dusk arrives about two in-game hours earlier.",
+			"THE LONG TABLE - a sixth Town walk-up. Donate fish to grow the trestle table through four stages; every donation pays Feast tokens, and finishing the table hands out a bonus card pack.",
+			"20-CARD ALBUM - 5x4 cards across Fish, Feast, Places and Critters. Packs open immediately: one free pack per event day, or 20 tokens for a three-card pack. Each pack guarantees a new card until the set is complete, duplicates pay 5 tokens and stack as SPARES, and hard pity lands at six packs.",
+			"THE HARVEST QUEEN - finish 20/20 and the gilded autumn hull is awarded automatically with a trophy reveal. She has exactly the Sea Trawler's stats (speed 215, value +20%), can never be bought, and is saved as a normal owned boat.",
+			"FIVE NEW FISH - Pumpkinseed Sunny (pond), Cranberry Darter (river), Maple Leaf Koi (lake), Wattle Grouper (Deep Sea) and The Grand Tom (night, anywhere). The Grand Tom card is also granted on the legendary catch. Three new quests pay tokens: A Full Plate, Potluck and The Grand Tom.",
+			"THE AUTUMN UI PASS - one season token table re-skins every screen: chestnut panels with walnut borders and wheat highlights, notched ribbon titles, umber buttons with amber focus rings, leaf corner sprigs, dotted wheat separators, amber progress bars, parchment card faces with rarity ribbons and wax-stamp NEW! stamps. Rarity colours, fish art, water and text sizes are untouched.",
+			"DEC 1 DEADLINE - the album header counts down (CARDS CLOSE TONIGHT on Dec 1), the ALBUM tab carries a countdown pill and the HUD chip warns in the final three days. After the close, the album and trophy stay readable forever, empty slots read RETURNS NOV 22, and the palette reverts on the next screen.",
+			"NEW GEAR - the Harvest Lantern (40 tokens) speeds night bites and draws rarer night fish. Tokens are a separate currency and never convert to coins; harvest bonuses and the 2X coin event never stack.",
+		],
+	},
 	{
 		"version": "1.8.1",
 		"title": "A FAIRER GREEN",
@@ -95,7 +109,7 @@ static func fill(body: VBoxContainer) -> void:
 		event_text = "2X COIN EVENT IS LIVE - %s LEFT" % GameState.event_time_text()
 	else:
 		event_text = "THE 2X COIN EVENT HAS ENDED - THANKS FOR PLAYING"
-		event_color = Color("#8d9aa6")
+		event_color = GameTheme.FAINT
 	var banner := UILib.label(body, event_text, 17, event_color, true)
 	banner.custom_minimum_size = Vector2(0.0, 30.0)
 
@@ -104,7 +118,7 @@ static func fill(body: VBoxContainer) -> void:
 				String(entry["title"])], 19, GameTheme.CREAM, true)
 		head.custom_minimum_size = Vector2(0.0, 30.0)
 		for item in entry["items"]:
-			var line := UILib.label(body, "  " + String(item), 14, Color("#c2d2dc"))
+			var line := UILib.label(body, "  " + String(item), 14, GameTheme.SUBTEXT)
 			line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			line.custom_minimum_size = Vector2(0.0, 22.0)

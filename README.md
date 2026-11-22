@@ -2,7 +2,8 @@
 
 A simple, polished 2D fishing game with a collection-and-progression loop, built in **Godot 4.7** (GDScript, Canvas 2D rendering, no external assets).
 
-**Play in your browser:** https://timmywwe13-hub.github.io/simple/build/web/
+**Play in your browser:** https://cottage-creek-fishing.surge.sh/ · https://cottage-creek.surge.sh/ · https://cottagecreek.surge.sh/ · https://creekfishing.surge.sh/
+**GitHub Pages mirror:** https://timmywwe13-hub.github.io/simple/build/web/
 
 ## How to run
 
@@ -40,6 +41,7 @@ godot --headless --path . --export-release Web build/web/index.html
 | Settings | menu or pause button `SETTINGS`, or `F11` for fullscreen |
 | What's New / patch notes | menu or pause button `WHAT'S NEW`, `U` in Town |
 | Play the Lucky Lily (Town) | walk to the riverboat and press `E` |
+| Harvest Feast board (Town) | walk to the long table and press `E`; also the menu's `HARVEST FEAST` / `FEAST & ALBUM` button |
 | Cycle fishing spots (gamepad) | shoulder buttons |
 | Everything else (gamepad) | left stick / D-pad, `A`/`X`, `B` to pause/back |
 | Quit | close window |
@@ -64,6 +66,7 @@ device.
 7. **Progress** — unlock the River, Lake, and Deep Sea regions by coins; each has its own fish table. Day/night, weather, daily catches and daily market demand change which fish are worth chasing.
 8. **Coconut Isle** — sail east from the Deep Sea to a tropical beach. Buy the axe in the shop, chop the palms for coconuts (each palm regrows in 20 minutes, with a timer over the stump), then spend the coconuts in **Coconut Isle Crafting** to build rods 25% better than every shop rod. The isle's own fish only bite with bait.
 9. **The Lucky Lily** — walk to the toy-coin riverboat in Town and press `E`. Pick a stake from 10 to 500 coins, then call **Skipper's Coin**, pick a **Pearl Shell**, or spin the **Lucky Catch** reel. Every payout includes the returned stake; the ledger tracks your session and lifetime results.
+10. **The Harvest Feast (Nov 22 – Dec 1)** — the whole world turns autumn and a sixth Town walk-up appears: the long table. Catch the five seasonal fish, donate fish to grow the table through four stages, and spend Feast tokens on 3-card packs. A free pack lands every event day. Collect all 20 cards to be awarded **The Harvest Queen**, a gilded hull with the Sea Trawler's stats. Packs and earning close on Dec 1 at 23:59; the album, spares, trophy and boat stay forever, and a 19/20 near-miss finishes next November.
 
 **Gambling is toy-coins only.** The Lucky Lily never takes real money, never sells chips and cannot be topped up with a purchase. Its fixed odds carry a house edge, and casino coins are kept separate from fish sales and the 2X coin event.
 
@@ -101,11 +104,26 @@ res://scripts/casino.gd    # Lucky Lily riverboat art and toy-coin panel
 res://scripts/FishDB.gd  # All fish data + regional tables
 res://scripts/ShopDB.gd  # Rods / lines / baits / buckets data
 res://scripts/GameTheme.gd # Cottagecore color palette + rarity tiers
+res://scripts/season_theme.gd # Seasonal palette token tables (autumn UI pass)
+res://scripts/harvest_cards.gd # 20-card Harvest album data + code-drawn card art
+res://scripts/harvest_table.gd # Town long table, FEAST/ALBUM board, pack reveals
 res://scripts/region_art.gd # Per-place palettes, props, music/ambience keys
 res://scripts/ui_lib.gd  # Tiny code-only UI toolkit
 res://scripts/touch_controls.gd # On-screen touch controls for phones/tablets
 res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 ```
+
+## Updates (v1.9)
+
+- **The Harvest Feast** - a seasonal event from **Nov 22 00:00 to Dec 1 23:59 local time**. The season gate is one explicit range check (it straddles the month change), `2222` forces it on for testing, and the whole palette applies at boot and reverts when the window closes
+- **Autumn everywhere** - a single `SeasonTheme` token table re-skins the start menu, pause, settings, stats, What's New, Fish Index, both shops, Fish Market, Boat Dealer, Quest Board, Lucky Lily and the new feast board. Chestnut panels, walnut borders, wheat top highlights, notched ribbon titles, umber buttons with amber focus rings, leaf corner sprigs, dotted wheat separators, parchment card faces and wax-stamp `NEW!` stamps. Rarity colours, fish art, water, sky, text sizes and hit targets are untouched
+- **World dressing** - per-region autumn palette overrides crossfade in on load, with drifting leaves, pumpkins, corn bundles, straw bales, a lit Deep Sea quay lantern, heavier cabin smoke and dusk about two in-game hours earlier
+- **The long table** - a sixth Town walk-up with four growth stages. Donate fish for tokens; completing the table hands out a bonus pack
+- **20-card album** - Fish, Feast, Places and Critters. Packs open immediately (never stranded at close), 3 cards each, no dupes inside a pack, guaranteed new card until complete, hard pity at six packs, duplicates pay 5 tokens as `SPARES`, and The Grand Tom card is also granted on the legendary catch
+- **The Harvest Queen** - awarded automatically at 20/20, exactly the Sea Trawler's stats (speed 215, value +20%), award-only, saved as a normal owned boat, with a gilded autumn renderer
+- **Five seasonal fish + three quests** - Pumpkinseed Sunny, Cranberry Darter, Maple Leaf Koi, Wattle Grouper and The Grand Tom (night, anywhere). A Full Plate, Potluck and The Grand Tom pay tokens. The Harvest Lantern is 40 tokens and draws rarer night fish
+- **Deadline clarity** - album header, countdown pill, HUD chip warning in the final three days, `CARDS CLOSE TONIGHT` on Dec 1, then a permanent read-only album with `RETURNS NOV 22` slots and `PACKS CLOSED UNTIL NOV 22`
+- **Web rebuild** - the v1.9 Web export replaces `build/web/`
 
 ## Updates (v1.8.1)
 
@@ -233,10 +251,10 @@ godot --headless --path . --export-release "Windows Desktop" build/windows/Cotta
 godot --headless --path . --export-release Android build/android/CottageCreekFishing.apk
 ```
 
-## Web deploy (GitHub Pages + Netlify only)
+## Web deploy (GitHub Pages + Surge + Netlify)
 
 The browser build lives in **`build/web/`** and is committed to the repo. That
-folder is the only artifact either host serves — there is no other hosting
+folder is the only artifact every host serves — there is no other hosting
 config, Worker, or backend.
 
 Rebuild it after changing scripts, scenes, or assets:
@@ -260,6 +278,28 @@ git add -A && git commit -m "Rebuild web export" && git push
 ```
 
 Live at <https://timmywwe13-hub.github.io/simple/build/web/>.
+
+### Surge
+
+The same committed build is mirrored on four Surge subdomains:
+
+- <https://cottage-creek-fishing.surge.sh/>
+- <https://cottage-creek.surge.sh/>
+- <https://cottagecreek.surge.sh/>
+- <https://creekfishing.surge.sh/>
+
+Authenticate once with `npx surge login`, then publish after a rebuild:
+
+```bash
+npx surge build/web https://cottage-creek-fishing.surge.sh
+npx surge build/web https://cottage-creek.surge.sh
+npx surge build/web https://cottagecreek.surge.sh
+npx surge build/web https://creekfishing.surge.sh
+```
+
+For CI, set `SURGE_TOKEN` instead of logging in interactively. Surge writes a
+`build/web/CNAME` file on deploy; it is ignored so the four domains stay
+independent.
 
 ### Netlify
 

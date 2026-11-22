@@ -43,13 +43,15 @@ func _gear(body: VBoxContainer, title: String, category: String, buy: Callable) 
 	var db: Dictionary = ShopDB.category(category)
 	for id in db.keys():
 		var d: Dictionary = db[id]
+		if String(d.get("season", "")) == "harvest" and not GameState.harvest_season_open():
+			continue
 		var is_bait := category == "baits"
 		var owned := bool(d.get("owned", false)) and not is_bait
 		var equipped := String(GameState.gear.get(GameState.gear_key(category), "")) == String(id)
 		var row := TownUI.row(body)
 		var name_l := UILib.label(row, String(d.get("name", id)), 16, UILib.CREAM, true)
 		name_l.position = Vector2(12.0, 4.0)
-		var desc_l := UILib.label(row, String(d.get("desc", "")), 12, Color("#a8c0cc"))
+		var desc_l := UILib.label(row, String(d.get("desc", "")), 12, GameTheme.SUBTEXT)
 		desc_l.position = Vector2(12.0, 24.0)
 		var stat_l := UILib.label(row, _stat_line(category, d), 12, GameTheme.LEAF)
 		stat_l.position = Vector2(300.0, 8.0)
@@ -57,7 +59,9 @@ func _gear(body: VBoxContainer, title: String, category: String, buy: Callable) 
 		# free, so the player can switch between the baits they own.
 		var charges := GameState.bait_count(String(id)) if is_bait else 0
 		var text := "BUY %d" % int(d.get("cost", 0))
-		if is_bait:
+		if String(d.get("season", "")) == "harvest":
+			text = "EQUIPPED" if equipped else ("EQUIP" if owned else "BUY %d TOKENS" % int(d.get("token_cost", 0)))
+		elif is_bait:
 			if equipped and charges > 0:
 				text = "BUY %d" % int(d.get("cost", 0))
 			elif charges > 0:
@@ -72,7 +76,7 @@ func _gear(body: VBoxContainer, title: String, category: String, buy: Callable) 
 func _craft_rows(body: VBoxContainer) -> void:
 	var note_row := TownUI.row(body, 24.0)
 	var note := UILib.label(note_row, "COCONUTS: %d - CHOP PALMS ON COCONUT ISLE" % GameState.coconuts,
-			13, Color("#a8c0cc"))
+			13, GameTheme.SUBTEXT)
 	note.position = Vector2(12.0, 2.0)
 	var axe_text := "OWNED"
 	var axe_desc := "Palm axe: 3 coconuts per tree."
@@ -102,7 +106,7 @@ func _craft_row(body: VBoxContainer, item_name: String, desc: String, stat: Stri
 	var row := TownUI.row(body)
 	var name_l := UILib.label(row, item_name, 16, UILib.CREAM, true)
 	name_l.position = Vector2(12.0, 4.0)
-	var desc_l := UILib.label(row, desc, 12, Color("#a8c0cc"))
+	var desc_l := UILib.label(row, desc, 12, GameTheme.SUBTEXT)
 	desc_l.position = Vector2(12.0, 24.0)
 	var stat_l := UILib.label(row, stat, 12, GameTheme.LEAF)
 	stat_l.position = Vector2(360.0, 8.0)
@@ -146,7 +150,7 @@ func _region_passes(body: VBoxContainer) -> void:
 		var note := "UNLOCK THE %s FISHING SPOT" % display.to_upper()
 		if r == "ocean":
 			note = "REQUIRES A REAL BOAT - SEE THE BOAT DEALER"
-		var desc_l := UILib.label(row, note, 12, Color("#a8c0cc"))
+		var desc_l := UILib.label(row, note, 12, GameTheme.SUBTEXT)
 		desc_l.position = Vector2(12.0, 24.0)
 		TownUI.row_button(row, "BUY %d" % cost, _on_unlock.bind(r))
 
@@ -245,10 +249,10 @@ func _draw() -> void:
 	# door + window
 	_pixel_rect(Rect2(-40.0, -70.0, 30.0, 56.0), Color("#3a2a24"))
 	_pixel_rect(Rect2(-37.0, -67.0, 24.0, 50.0), Color("#54382c"))
-	_pixel_rect(Rect2(18.0, -70.0, 40.0, 30.0), Color("#2c3d4d"))
+	_pixel_rect(Rect2(18.0, -70.0, 40.0, 30.0), GameTheme.BUTTON_PRESS)
 	_pixel_rect(Rect2(21.0, -67.0, 34.0, 24.0), Color("#9fc0cc"))
-	_pixel_rect(Rect2(37.0, -70.0, 3.0, 30.0), Color("#2c3d4d"))
-	_pixel_rect(Rect2(18.0, -57.0, 40.0, 3.0), Color("#2c3d4d"))
+	_pixel_rect(Rect2(37.0, -70.0, 3.0, 30.0), GameTheme.BUTTON_PRESS)
+	_pixel_rect(Rect2(18.0, -57.0, 40.0, 3.0), GameTheme.BUTTON_PRESS)
 	# sign
 	_pixel_rect(Rect2(-34.0, -136.0, 68.0, 20.0), UILib.PANEL_LIGHT)
 	PixFont.draw_text_centered(self, 0.0, -132.0, "STORE", GameTheme.GOLD, 2, 1)

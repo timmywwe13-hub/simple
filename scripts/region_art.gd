@@ -228,8 +228,92 @@ const TABLE := {
 }
 
 
-static func get_art(key: String) -> Dictionary:
+static func get_art(key: String, season := "") -> Dictionary:
+	if season == "harvest":
+		return stylize(key)
 	return TABLE.get(key, TABLE["pond"])
+
+
+## Autumn palette override for every region. Only the day/night colours,
+## canopies, banks, water and mountain ramps change - fish art, hit targets
+## and the water's shape stay exactly as they are.
+static func stylize(key: String) -> Dictionary:
+	var out: Dictionary = TABLE.get(key, TABLE["pond"]).duplicate(true)
+	var o: Dictionary = HARVEST_OVERRIDES.get(key, HARVEST_OVERRIDES["pond"])
+	for k in o.keys():
+		out[k] = Color(String(o[k]))
+	out["season"] = "harvest"
+	return out
+
+
+const HARVEST_OVERRIDES := {
+	"pond": {
+		"sky_top": "#d9843f", "sky_mid": "#e8ac62", "sky_low": "#f5d49a",
+		"night_top": "#2a1a14", "night_mid": "#3d2719", "night_low": "#6a4526",
+		"sun": "#fff0c4", "cloud": "#fbe4c2",
+		"w_shallow": "#6d5a38", "w_mid": "#4a3524", "w_deep": "#281a12",
+		"w_surface": "#ffe6b8",
+		"mtn_far": "#a57a58", "mtn_mid": "#7d5640", "mtn_near": "#523a2c",
+		"tree": "#b5622a", "tree_dark": "#7c3f1e",
+		"bank": "#b58a4a", "bank_dark": "#6d4a24", "bank_light": "#d8b26a",
+		"bank_soil": "#5a3a22", "bank_soil_light": "#74502f",
+	},
+	"river": {
+		"sky_top": "#b07a4a", "sky_mid": "#d6a066", "sky_low": "#eed0a0",
+		"night_top": "#231813", "night_mid": "#38261a", "night_low": "#5e4228",
+		"sun": "#ffe8b0", "cloud": "#f6dcb4",
+		"w_shallow": "#6b563a", "w_mid": "#493424", "w_deep": "#271a12",
+		"w_surface": "#ffdfae",
+		"mtn_far": "#a07858", "mtn_mid": "#79543e", "mtn_near": "#50392a",
+		"tree": "#c06a2c", "tree_dark": "#83441f",
+		"bank": "#b49258", "bank_dark": "#6f5630", "bank_light": "#d8bc7e",
+		"bank_soil": "#57402a", "bank_soil_light": "#6f5236",
+	},
+	"lake": {
+		"sky_top": "#c47a3e", "sky_mid": "#e0a25c", "sky_low": "#f2cf96",
+		"night_top": "#281a14", "night_mid": "#3d2819", "night_low": "#684326",
+		"sun": "#ffedb8", "cloud": "#f8e0ba",
+		"w_shallow": "#6a5638", "w_mid": "#473322", "w_deep": "#251810",
+		"w_surface": "#ffe4b4",
+		"mtn_far": "#9c7452", "mtn_mid": "#74503a", "mtn_near": "#4d3626",
+		"tree": "#a95c28", "tree_dark": "#743c1c",
+		"bank": "#b08644", "bank_dark": "#694820", "bank_light": "#d4ac62",
+		"bank_soil": "#563a22", "bank_soil_light": "#6e4e2e",
+	},
+	"ocean": {
+		"sky_top": "#d47a3a", "sky_mid": "#efae5e", "sky_low": "#f8d79c",
+		"night_top": "#261812", "night_mid": "#3a2418", "night_low": "#5d3c24",
+		"sun": "#ffdf9a", "cloud": "#ffe2b8",
+		"w_shallow": "#6a5a3c", "w_mid": "#463222", "w_deep": "#231710",
+		"w_surface": "#ffe2ae",
+		"mtn_far": "#96684e", "mtn_mid": "#704c36", "mtn_near": "#4a3224",
+		"tree": "#8a5a2a", "tree_dark": "#5f3c1e",
+		"bank": "#a3865a", "bank_dark": "#65513a", "bank_light": "#c9aa76",
+		"bank_soil": "#564434", "bank_soil_light": "#6d5842",
+	},
+	"open": {
+		"sky_top": "#bd7a46", "sky_mid": "#daa060", "sky_low": "#f0cc94",
+		"night_top": "#241812", "night_mid": "#38251a", "night_low": "#5a3e26",
+		"sun": "#ffedb8", "cloud": "#f7ddb8",
+		"w_shallow": "#64543a", "w_mid": "#443222", "w_deep": "#221710",
+		"w_surface": "#ffe2b0",
+		"mtn_far": "#9a7050", "mtn_mid": "#72503a", "mtn_near": "#4c3526",
+		"tree": "#9a5c2c", "tree_dark": "#6b3f20",
+		"bank": "#a2824e", "bank_dark": "#624824", "bank_light": "#c8a666",
+		"bank_soil": "#543c26", "bank_soil_light": "#6a5032",
+	},
+	"island": {
+		"sky_top": "#dc8a42", "sky_mid": "#eda95e", "sky_low": "#f7d69c",
+		"night_top": "#2a1b14", "night_mid": "#402a1a", "night_low": "#6a4626",
+		"sun": "#ffefbe", "cloud": "#fbe6c2",
+		"w_shallow": "#6f5a38", "w_mid": "#4b3522", "w_deep": "#281a10",
+		"w_surface": "#ffe9c0",
+		"mtn_far": "#9c7450", "mtn_mid": "#77523a", "mtn_near": "#503826",
+		"tree": "#a8642a", "tree_dark": "#75441e",
+		"bank": "#d8b276", "bank_dark": "#a9854e", "bank_light": "#ecd09a",
+		"bank_soil": "#8f6a3e", "bank_soil_light": "#a98252",
+	},
+}
 
 
 static func display(key: String) -> String:

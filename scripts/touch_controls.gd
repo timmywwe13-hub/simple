@@ -420,6 +420,6 @@ func _draw_rotate_overlay() -> void:
 			s * 0.6, s * 1.3), Color(0.86, 0.92, 0.98, 0.35), true)
 	var ps := 4 if view_size.x > 420.0 else 3
 	PixFont.draw_text_centered(_canvas, cx, cy + s * 1.2,
-			"ROTATE YOUR DEVICE", Color("#f2c14e"), ps, 1)
+			"ROTATE YOUR DEVICE", GameTheme.GOLD, ps, 1)
 	PixFont.draw_text_centered(_canvas, cx, cy + s * 1.2 + 26.0,
-			"COTTAGE CREEK IS PLAYED IN LANDSCAPE", Color("#c8d6e2"), 2, 1)
+			"COTTAGE CREEK IS PLAYED IN LANDSCAPE", GameTheme.SUBTEXT, 2, 1)

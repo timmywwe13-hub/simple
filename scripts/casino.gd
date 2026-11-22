@@ -74,10 +74,10 @@ func interact() -> void:
 	body.add_theme_constant_override("separation", 4)
 	var subtitle := UILib.label(body,
 			"TOY COINS ONLY - NO REAL MONEY, NO PURCHASES, NO CHIPS TO BUY",
-			13, Color("#a8c0cc"))
+			13, GameTheme.SUBTEXT)
 	subtitle.custom_minimum_size = Vector2(0.0, 20.0)
 	_build_stake_row(body)
-	stake_hint = UILib.label(body, "", 12, Color("#a8c0cc"))
+	stake_hint = UILib.label(body, "", 12, GameTheme.SUBTEXT)
 	stake_hint.custom_minimum_size = Vector2(0.0, 18.0)
 	_build_tabs(body)
 	game_box = VBoxContainer.new()
@@ -126,7 +126,7 @@ func _build_stake_row(body: VBoxContainer) -> void:
 	body.add_child(hb)
 	for bet in CasinoDBLib.BETS:
 		var b := UILib.button(hb, str(int(bet)), _on_stake.bind(int(bet)), 15,
-				UILib.PANEL_LIGHT, Color("#55708a"), Color("#2c3d4d"),
+				UILib.PANEL_LIGHT, GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS,
 				UILib.CREAM, Vector2(102.0, 32.0))
 		b.set_meta("stake", int(bet))
 		stake_buttons.append(b)
@@ -140,7 +140,7 @@ func _build_tabs(body: VBoxContainer) -> void:
 	for entry in CasinoDBLib.GAMES:
 		var id := String(entry.get("id", ""))
 		var b := UILib.button(hb, String(entry.get("name", id)), _on_tab.bind(id), 15,
-				UILib.PANEL_LIGHT, Color("#55708a"), Color("#2c3d4d"),
+				UILib.PANEL_LIGHT, GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS,
 				UILib.CREAM, Vector2(222.0, 38.0))
 		b.set_meta("game", id)
 		tab_buttons.append(b)
@@ -182,7 +182,7 @@ func _rebuild_game() -> void:
 	reel_window = null
 	reel_strip = null
 	var entry := CasinoDBLib.game(game_id)
-	var odds := UILib.label(game_box, String(entry.get("odds", "")), 13, Color("#a8c0cc"))
+	var odds := UILib.label(game_box, String(entry.get("odds", "")), 13, GameTheme.SUBTEXT)
 	odds.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	odds.custom_minimum_size = Vector2(0.0, 26.0)
 	match game_id:
@@ -192,10 +192,10 @@ func _rebuild_game() -> void:
 			hb.alignment = BoxContainer.ALIGNMENT_CENTER
 			game_box.add_child(hb)
 			var heads := UILib.button(hb, "HEADS", _play.bind("HEADS"), 18,
-					UILib.PANEL_LIGHT, Color("#55708a"), Color("#2c3d4d"),
+					UILib.PANEL_LIGHT, GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS,
 					UILib.CREAM, Vector2(180.0, 44.0))
 			var tails := UILib.button(hb, "TAILS", _play.bind("TAILS"), 18,
-					UILib.PANEL_LIGHT, Color("#55708a"), Color("#2c3d4d"),
+					UILib.PANEL_LIGHT, GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS,
 					UILib.CREAM, Vector2(180.0, 44.0))
 			action_buttons.append(heads)
 			action_buttons.append(tails)
@@ -206,7 +206,7 @@ func _rebuild_game() -> void:
 			game_box.add_child(hb)
 			for i in range(1, 4):
 				var b := UILib.button(hb, "SHELL %d" % i, _play.bind(str(i)), 17,
-						UILib.PANEL_LIGHT, Color("#55708a"), Color("#2c3d4d"),
+						UILib.PANEL_LIGHT, GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS,
 						UILib.CREAM, Vector2(180.0, 50.0))
 				action_buttons.append(b)
 		"reel":
@@ -237,7 +237,7 @@ func _build_reel() -> void:
 		for i in range(stops.size()):
 			var stop: Dictionary = stops[i]
 			var cell := ColorRect.new()
-			cell.color = Color("#26364a") if i % 2 == 0 else Color("#20303e")
+			cell.color = UILib.PANEL_LIGHT.darkened(0.25) if i % 2 == 0 else UILib.PANEL
 			cell.custom_minimum_size = Vector2(REEL_CELL_W, REEL_H)
 			cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			reel_strip.add_child(cell)
@@ -421,7 +421,7 @@ func _refresh() -> void:
 		else:
 			stake_hint.text = "STAKE %d  -  WIN UP TO %d COINS AT %dX" % [
 				current_stake, current_stake * _max_mult(), _max_mult()]
-			stake_hint.add_theme_color_override("font_color", Color("#a8c0cc"))
+			stake_hint.add_theme_color_override("font_color", GameTheme.SUBTEXT)
 	if is_instance_valid(ledger_label):
 		var lifetime_w := int(GameState.stats.get("casino_wagered", 0))
 		var lifetime_r := int(GameState.stats.get("casino_returned", 0))
@@ -443,8 +443,8 @@ func _refresh() -> void:
 
 func _style_pick(b: Button, selected: bool) -> void:
 	var base := GameTheme.GOLD if selected else UILib.PANEL_LIGHT
-	var hover := Color("#ffe08a") if selected else Color("#55708a")
-	var pressed := Color("#c99a2e") if selected else Color("#2c3d4d")
+	var hover := Color("#ffe08a") if selected else GameTheme.BUTTON_HOVER
+	var pressed := Color("#c99a2e") if selected else GameTheme.BUTTON_PRESS
 	var styles := UILib.sfx_btn(base, hover, pressed)
 	b.add_theme_stylebox_override("normal", styles["normal"])
 	b.add_theme_stylebox_override("hover", styles["hover"])

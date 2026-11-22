@@ -444,33 +444,93 @@ static var FISH := {
 		"weight_kg": [12.0, 35.0], "coin": 720, "catch_rate": 0.1,
 		"desc": "The island's old hoard, swimming in gold.",
 	},
+	# --- Harvest Feast seasonal species (v1.9). Only bite while the event
+	# window is open; fish_pool() filters them by `season`. ---
+	"pumpkinseed": {
+		"id": "pumpkinseed", "name": "Pumpkinseed Sunny", "rarity": "Common", "region": "pond",
+		"shape": "round", "pattern": "spots", "season": "harvest",
+		"palette": {"body": "#e08a3c", "belly": "#f6d08a", "fin": "#b5622a", "eye": "#2a1a12"},
+		"weight_kg": [0.15, 0.5], "coin": 30, "catch_rate": 1.0,
+		"desc": "Round, speckled and glowing like a little pumpkin.",
+	},
+	"cranberry_darter": {
+		"id": "cranberry_darter", "name": "Cranberry Darter", "rarity": "Uncommon", "region": "river",
+		"shape": "minnow", "pattern": "stripes", "season": "harvest",
+		"palette": {"body": "#9c3d54", "belly": "#e8a0a8", "fin": "#6d2438", "eye": "#2a1a12"},
+		"weight_kg": [0.1, 0.4], "coin": 48, "catch_rate": 0.7,
+		"desc": "A cranberry-red dart of the autumn current.",
+	},
+	"maple_koi": {
+		"id": "maple_koi", "name": "Maple Leaf Koi", "rarity": "Rare", "region": "lake",
+		"shape": "round", "pattern": "scales", "season": "harvest",
+		"palette": {"body": "#b5562a", "belly": "#f0b45a", "fin": "#e08a3c", "eye": "#2a1a12"},
+		"features": ["streamer"],
+		"weight_kg": [0.8, 2.8], "coin": 130, "catch_rate": 0.4,
+		"desc": "Rust-to-gold scales and fins like drifting streamers.",
+	},
+	"wattle_grouper": {
+		"id": "wattle_grouper", "name": "Wattle Grouper", "rarity": "Epic", "region": "ocean",
+		"shape": "round", "pattern": "speckle", "season": "harvest",
+		"palette": {"body": "#a86432", "belly": "#e8c08a", "fin": "#6d3f24", "eye": "#f2c14e"},
+		"features": ["fangs", "big_mouth"],
+		"weight_kg": [4.0, 14.0], "coin": 280, "catch_rate": 0.22,
+		"desc": "A copper deep-sea bruiser with a jaw full of fangs.",
+	},
+	"grand_tom": {
+		"id": "grand_tom", "name": "The Grand Tom", "rarity": "Legendary", "region": "ocean",
+		"shape": "round", "pattern": "bands", "season": "harvest",
+		"anywhere": true, "time": "night",
+		"palette": {"body": "#8a5a2a", "belly": "#d9a15a", "fin": "#c9532b", "eye": "#f2b03c"},
+		"features": ["wings", "spikes"],
+		"weight_kg": [6.0, 18.0], "coin": 700, "catch_rate": 0.05,
+		"desc": "A bronze-and-umber legend that fans its tail in the dark.",
+	},
 }
 
 static func fish_data(fish_id: String) -> Dictionary:
 	return FISH.get(fish_id, {})
 
-static func fish_by_region(region: String) -> Array[Dictionary]:
+static func fish_by_region(region: String, season := "") -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for fid in FISH.keys():
 		var f: Dictionary = FISH[fid]
-		if f.get("region") == region:
-			out.append(f)
+		if f.get("region") != region:
+			continue
+		if not _season_match(f, season):
+			continue
+		out.append(f)
 	return out
 
-static func all_ids() -> Array:
-	return FISH.keys()
+static func all_ids(season := "") -> Array:
+	var out: Array = []
+	for fid in FISH.keys():
+		if _season_match(FISH[fid], season):
+			out.append(fid)
+	return out
+
+## Everything the player can currently catch. Seasonal species only count
+## while their season is running, so completion never tanks on Dec 2.
+static func available_ids(season := "") -> Array:
+	return all_ids(season)
+
+static func _season_match(f: Dictionary, season: String) -> bool:
+	var need := String(f.get("season", ""))
+	if need == "":
+		return true
+	return need == season
 
 ## Everything that can bite at a spot: the region's own table plus the
 ## roaming monsters (fish flagged "anywhere"), filtered by the weather and
 ## the hour. A fish with a "weather" tag only bites in that weather; one
 ## with a "time" tag only bites by day or by night.
-static func fish_pool(region: String, weather := "", night := false) -> Array[Dictionary]:
+static func fish_pool(region: String, weather := "", night := false, season := "") -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
-	for f in fish_by_region(region):
+	for f in fish_by_region(region, season):
 		out.append(f)
 	for fid in FISH.keys():
 		var roaming: Dictionary = FISH[fid]
-		if bool(roaming.get("anywhere", false)) and not out.has(roaming):
+		if bool(roaming.get("anywhere", false)) and _season_match(roaming, season) \
+				and not out.has(roaming):
 			out.append(roaming)
 	var filtered: Array[Dictionary] = []
 	for f in out:

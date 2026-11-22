@@ -69,7 +69,7 @@ func _ready() -> void:
 ## yet.
 func _build_updates_button() -> void:
 	updates_btn = UILib.button(null, _updates_label(), _on_updates, 14,
-			GameTheme.PANEL_LIGHT, Color("#55708a"), Color("#2c3d4d"), UILib.CREAM,
+			GameTheme.PANEL_LIGHT, UILib.BUTTON_HOVER, UILib.BUTTON_PRESS, UILib.CREAM,
 			Vector2(166.0, 34.0))
 	ui_layer.add_child(updates_btn)
 	updates_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -120,17 +120,18 @@ func _walk_bounds() -> Rect2:
 func _spawn_interactables() -> void:
 	interactables.clear()
 	layout.clear()
-	_add("GeneralStore", GeneralStore.new(), 0.16, 0.0)
-	_add("FishMarket", FishMarket.new(), 0.36, 0.0)
-	_add("LuckyLily", CasinoScript.new(), 0.56, 0.0)
-	_add("BoatDealer", BoatDealer.new(), 0.76, 0.0)
-	_add("QuestGiver", QuestGiver.new(), 0.93, 18.0)
+	_add("GeneralStore", GeneralStore.new(), 0.12, 0.0)
+	_add("FishMarket", FishMarket.new(), 0.28, 0.0)
+	_add("LuckyLily", CasinoScript.new(), 0.44, 0.0)
+	_add("BoatDealer", BoatDealer.new(), 0.60, 0.0)
+	_add("HarvestTable", HarvestTable.new(), 0.76, 0.0)
+	_add("QuestGiver", QuestGiver.new(), 0.87, 18.0)
 
 
 ## Buildings shrink a little on narrow windows (640x360 phones) so five
 ## walk-ups still fit side by side without their awnings overlapping.
 func _art_scale() -> float:
-	return clampf(view_size.x / 900.0, 0.72, 1.0)
+	return clampf(view_size.x / 1000.0, 0.70, 0.96)
 
 
 func _add(name_str: String, node: Interactable, x_frac: float, y_off: float) -> void:
@@ -264,13 +265,15 @@ func _draw() -> void:
 	_draw_hills()
 	_draw_ground(t)
 	_draw_fence()
+	if GameState.harvest_season_open():
+		_draw_harvest_dressing(t)
 	_draw_hud()
 	_draw_event_banner()
 	if toast_text != "":
 		var tw := PixFont.text_width(toast_text, 3)
 		var tx := (view_size.x - tw) * 0.5
 		var ty := view_size.y - 120.0
-		_pixel_rect(Rect2(tx - 14.0, ty - 8.0, tw + 28.0, 30.0), Color("#141c2c", 0.8))
+		_pixel_rect(Rect2(tx - 14.0, ty - 8.0, tw + 28.0, 30.0), Color(GameTheme.PANEL.darkened(0.15), 0.8))
 		_pixel_rect(Rect2(tx - 14.0, ty - 8.0, tw + 28.0, 3.0), GameTheme.GOLD)
 		PixFont.draw_text_shadowed(self, Vector2(tx, ty), toast_text, GameTheme.CREAM,
 				Color("#050a12", 0.65), 3, 1, 1)
@@ -292,11 +295,11 @@ func _draw_sky() -> void:
 		else:
 			c = mid.lerp(low, clampf((tt - 0.5) / 0.5, 0.0, 1.0))
 		_pixel_rect(Rect2(0.0, y0, view_size.x, y1 - y0 + 2.0), c)
-	_draw_pixel_circle(Vector2(view_size.x * 0.16, 76.0), 24.0, Color("#fff2cf"), 4.0)
+	_draw_pixel_circle(Vector2(view_size.x * 0.16, 76.0), 24.0, GameTheme.WHEAT, 4.0)
 
 
 func _draw_clouds(t: float) -> void:
-	var base := Color("#fdf2f5")
+	var base := GameTheme.CLOUD
 	base.a = 0.8
 	for i in range(5):
 		var y := 36.0 + float(i) * 26.0
@@ -339,7 +342,10 @@ func _draw_ground(t: float) -> void:
 	for i in range(10):
 		var fx := fmod(float(i) * 137.0 + 40.0, view_size.x)
 		var fy := ground_y + 12.0 + fmod(float(i) * 61.0, 14.0)
-		_pixel_rect(Rect2(fx, fy, 3.0, 3.0), Color("#e8d0a0") if i % 2 == 0 else Color("#d98cb0"))
+		if GameState.harvest_season_open():
+			_pixel_rect(Rect2(fx, fy, 3.0, 3.0), GameTheme.PUMPKIN if i % 2 == 0 else GameTheme.GOLD)
+		else:
+			_pixel_rect(Rect2(fx, fy, 3.0, 3.0), Color("#e8d0a0") if i % 2 == 0 else Color("#d98cb0"))
 
 
 func _draw_fence() -> void:
@@ -352,32 +358,122 @@ func _draw_fence() -> void:
 	_pixel_rect(Rect2(0.0, y - 10.0, view_size.x, 4.0), GameTheme.WOOD)
 
 
+## Autumn festival dressing: string lights between the awnings, bunting,
+## hay bales, corn stalks, a scarecrow, pumpkin stacks and drifting leaves.
+## The trestle table itself is the HarvestTable walk-up's own art.
+func _draw_harvest_dressing(t: float) -> void:
+	var wire := GameTheme.WHEAT.darkened(0.28)
+	var x0 := view_size.x * 0.09
+	var x1 := view_size.x * 0.94
+	var ly := ground_y - 146.0
+	# sagging string lights
+	for i in range(1, 33):
+		var f := float(i) / 32.0
+		var p := Vector2(lerpf(x0, x1, f), ly + sin(f * PI) * 26.0)
+		_pixel_rect(Rect2(p.x - 3.0, p.y, 6.0, 2.0), wire)
+	for i in range(1, 20):
+		var f := float(i) / 20.0
+		var p := Vector2(lerpf(x0, x1, f), ly + sin(f * PI) * 26.0 + 5.0)
+		var warm := GameTheme.GOLD if i % 3 != 0 else GameTheme.PUMPKIN
+		_pixel_rect(Rect2(p.x - 3.0, p.y, 6.0, 7.0), warm)
+		if GameState.quality_level() >= 1:
+			_draw_pixel_circle(p + Vector2(0.0, 3.0), 10.0, Color(warm.r, warm.g, warm.b, 0.12), 4.0)
+	# bunting triangles under the lights
+	for i in range(9):
+		var f := float(i) / 8.0
+		var bx := lerpf(x0, x1, f)
+		var by := ly + sin(f * PI) * 26.0 + 9.0
+		var bc: Color = [GameTheme.PUMPKIN, GameTheme.GOLD, GameTheme.CRANBERRY, GameTheme.LEAF][i % 4]
+		_pixel_rect(Rect2(bx - 5.0, by, 10.0, 2.0), wire)
+		_pixel_rect(Rect2(bx - 4.0, by + 2.0, 8.0, 7.0), bc)
+	# hay bales at the edges of the square
+	for i in range(2):
+		var hx := 18.0 + float(i) * (view_size.x - 96.0)
+		var hy := ground_y + 46.0
+		_pixel_rect(Rect2(hx, hy, 58.0, 26.0), GameTheme.WHEAT)
+		_pixel_rect(Rect2(hx, hy, 58.0, 4.0), GameTheme.WHEAT.lightened(0.16))
+		for j in range(4):
+			_pixel_rect(Rect2(hx + 6.0 + float(j) * 13.0, hy + 6.0, 2.0, 16.0), GameTheme.HUSK)
+	# corn-stalk bundles
+	for i in range(4):
+		var cx := 84.0 + float(i) * 74.0
+		var top := ground_y - 54.0 - float(i % 2) * 8.0
+		_pixel_rect(Rect2(cx, top, 3.0, ground_y + 22.0 - top), GameTheme.LEAF.darkened(0.2))
+		_pixel_rect(Rect2(cx + 6.0, top + 6.0, 3.0, ground_y + 18.0 - top), GameTheme.LEAF.darkened(0.2))
+		_pixel_rect(Rect2(cx - 7.0, top + 18.0, 14.0, 3.0), GameTheme.LEAF)
+		_pixel_rect(Rect2(cx - 3.0, top + 4.0, 7.0, 10.0), GameTheme.GOLD)
+	# scarecrow
+	var sx := view_size.x * 0.035
+	var sy := ground_y + 22.0
+	_pixel_rect(Rect2(sx, sy - 54.0, 3.0, 54.0), GameTheme.WOOD_DARK)
+	_pixel_rect(Rect2(sx - 22.0, sy - 38.0, 48.0, 3.0), GameTheme.WOOD_DARK)
+	_pixel_rect(Rect2(sx - 10.0, sy - 40.0, 23.0, 22.0), GameTheme.CRANBERRY)
+	_draw_pixel_circle(Vector2(sx + 1.0, sy - 48.0), 8.0, GameTheme.WHEAT, 3.0)
+	_pixel_rect(Rect2(sx - 12.0, sy - 58.0, 28.0, 5.0), GameTheme.PUMPKIN)
+	_pixel_rect(Rect2(sx - 2.0, sy - 50.0, 2.0, 2.0), GameTheme.INK)
+	_pixel_rect(Rect2(sx + 5.0, sy - 50.0, 2.0, 2.0), GameTheme.INK)
+	# pumpkin stacks beside the shops
+	for i in range(5):
+		var px := view_size.x * (0.20 + float(i) * 0.16)
+		var py := ground_y + 58.0
+		_draw_pixel_circle(Vector2(px, py), 9.0, GameTheme.PUMPKIN, 3.0)
+		_draw_pixel_circle(Vector2(px + 14.0, py - 3.0), 7.0, GameTheme.EMBER, 3.0)
+		_pixel_rect(Rect2(px - 2.0, py - 12.0, 3.0, 4.0), GameTheme.HUSK)
+	# leaf drift (static dressing only when reduce motion is on)
+	if GameState.reduce_motion():
+		return
+	for i in range(12):
+		var lx := fposmod(float(i) * 97.0 + t * (10.0 + float(i) * 2.0), view_size.x + 80.0) - 40.0
+		var ly2 := ground_y - 90.0 + fposmod(float(i) * 53.0 + t * 14.0,
+				view_size.y - ground_y + 60.0)
+		var lc: Color = [GameTheme.PUMPKIN, GameTheme.GOLD, GameTheme.EMBER, GameTheme.CRANBERRY][i % 4]
+		lc.a = 0.85
+		_pixel_rect(Rect2(lx, ly2, 6.0, 3.0), lc)
+		_pixel_rect(Rect2(lx + 2.0, ly2 - 2.0, 3.0, 2.0), lc.lightened(0.16))
+
+
 func _draw_hud() -> void:
 	_hud_line("COINS %d" % GameState.coins, 12.0, 12.0, GameTheme.GOLD)
-	_hud_line("BUCKET %d/%d" % [GameState.inventory_count(), GameState.bucket_capacity()], 12.0, 40.0, UILib.CREAM)
+	var row := 50.0
+	if GameState.harvest_season_open():
+		_hud_line("%d HARVEST TOKENS  %s" % [GameState.harvest_tokens(), GameState.harvest_time_text()],
+				12.0, row, GameTheme.GOLD)
+		row += 32.0
+	_hud_line("BUCKET %d/%d" % [GameState.inventory_count(), GameState.bucket_capacity()], 12.0, row, UILib.CREAM)
 	var hint := "WASD / ARROWS - WALK    E - INTERACT    U - WHAT'S NEW    ESC - CLOSE"
 	if touch != null and touch.enabled:
 		hint = "DRAG THE STICK TO WALK - TAP TALK NEAR A BUILDING - CLOSE TO LEAVE A SHOP"
 	PixFont.draw_text_shadowed(self, Vector2((view_size.x - PixFont.text_width(hint, 2)) * 0.5, view_size.y - 24.0),
-			hint, Color("#c8d6e2"), Color("#050a12", 0.6), 2, 1, 1)
+			hint, GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
 
 
 func _hud_line(txt: String, x: float, y: float, c: Color) -> void:
 	var w := PixFont.text_width(txt, 3) + 24.0
-	_pixel_rect(Rect2(x, y, w, 30.0), Color("#141c2c", 0.8))
-	_pixel_rect(Rect2(x, y, w, 3.0), Color("#3b4a63", 0.9))
+	_pixel_rect(Rect2(x, y, w, 30.0), Color(GameTheme.PANEL.darkened(0.15), 0.8))
+	_pixel_rect(Rect2(x, y, w, 3.0), Color(GameTheme.PANEL_LIGHT, 0.9))
 	PixFont.draw_text_shadowed(self, Vector2(x + 12.0, y + 7.0), txt, c, Color("#050a12", 0.65), 3, 1, 1)
 
 
 ## Gold countdown strip for the 2x coin launch event.
 func _draw_event_banner() -> void:
 	# modal panels dim the world; don't leave a grey banner floating behind them
-	if active_panel != null or not GameState.event_active():
+	if active_panel != null:
+		return
+	if GameState.harvest_season_open():
+		var htxt := "HARVEST FEAST - %s LEFT" % GameState.harvest_time_text()
+		var hw := PixFont.text_width(htxt, 2) + 22.0
+		var hx := (view_size.x - hw) * 0.5
+		_pixel_rect(Rect2(hx, 12.0, hw, 26.0), Color(GameTheme.PANEL.darkened(0.15), 0.85))
+		_pixel_rect(Rect2(hx, 12.0, hw, 3.0), GameTheme.PUMPKIN)
+		_pixel_rect(Rect2(hx, 35.0, hw, 3.0), GameTheme.EMBER)
+		PixFont.draw_text_centered(self, view_size.x * 0.5, 18.0, htxt, GameTheme.WHEAT, 2, 1)
+		return
+	if not GameState.event_active():
 		return
 	var txt := "2X COINS - %s LEFT" % GameState.event_time_text()
 	var w := PixFont.text_width(txt, 2) + 22.0
 	var x := (view_size.x - w) * 0.5
-	_pixel_rect(Rect2(x, 12.0, w, 26.0), Color("#141c2c", 0.85))
+	_pixel_rect(Rect2(x, 12.0, w, 26.0), Color(GameTheme.PANEL.darkened(0.15), 0.85))
 	_pixel_rect(Rect2(x, 12.0, w, 3.0), GameTheme.GOLD)
 	_pixel_rect(Rect2(x, 35.0, w, 3.0), GameTheme.GOLD.darkened(0.35))
 	PixFont.draw_text_centered(self, view_size.x * 0.5, 18.0, txt, GameTheme.GOLD, 2, 1)

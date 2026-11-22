@@ -101,6 +101,9 @@ static var LANTERNS := {
 	"lantern_storm": {"id": "lantern_storm", "name": "Storm Lantern", "cost": 750,
 		"night_bite": 0.80, "night_rare": 1.55, "owned": false,
 		"desc": "Sealed against the wind. Night rare fish love it."},
+	"lantern_harvest": {"id": "lantern_harvest", "name": "Harvest Lantern", "cost": 0,
+		"token_cost": 40, "season": "harvest", "night_bite": 0.85, "night_rare": 1.45,
+		"owned": false, "desc": "A warm harvest glow. Bought with 40 Feast tokens."},
 }
 
 static var BOATS := {
@@ -112,6 +115,11 @@ static var BOATS := {
 		"speed": 170.0, "value_mult": 1.10, "desc": "Light and quick on open water.", "owned": false},
 	"boat_trawler": {"id": "boat_trawler", "name": "Sea Trawler", "cost": 2200,
 		"speed": 215.0, "value_mult": 1.20, "desc": "Deep-sea ready. Fish fetch 20% more.", "owned": false},
+	# Award-only grand prize: exactly the Trawler's stats, granted once at
+	# 20/20 cards. buy_boat() refuses award_only hulls.
+	"boat_harvest": {"id": "boat_harvest", "name": "The Harvest Queen", "cost": 0,
+		"speed": 215.0, "value_mult": 1.20, "award_only": true,
+		"desc": "Gilded autumn hull. Awarded for completing the Harvest album.", "owned": false},
 }
 
 ## Rod tier from the hidden timing_window marker: 0 = Twig, 4 = Carbon.
@@ -183,6 +191,23 @@ static func mark_owned_rods(ids: Array) -> void:
 			RODS[id]["owned"] = true
 		elif CRAFTED_RODS.has(id):
 			CRAFTED_RODS[id]["owned"] = true
+
+## Owned ids of a non-rod category, so bought lines / buckets / lanterns
+## (including the token-bought Harvest Lantern) survive a restart.
+static func owned_ids(category: String) -> Array:
+	var out: Array = []
+	var db := _db(category)
+	for id in db.keys():
+		if bool(db[id].get("owned", false)):
+			out.append(String(id))
+	return out
+
+static func mark_owned(category: String, ids: Array) -> void:
+	var db := _db(category)
+	for id_v in ids:
+		var id := String(id_v)
+		if db.has(id):
+			db[id]["owned"] = true
 
 static func reset_owned() -> void:
 	for db in [RODS, CRAFTED_RODS, LINES, BUCKETS, LANTERNS, BOATS]:

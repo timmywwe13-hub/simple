@@ -26,29 +26,36 @@ func interact() -> void:
 		panel_scroll.scroll_vertical = scroll_pos
 		panel_scroll.set_deferred("scroll_vertical", scroll_pos)
 	s["coins"].text = "COINS %d" % GameState.coins
-	var intro := UILib.label(body, "FINISH QUESTS - RETURN HERE TO CLAIM REWARDS", 14, Color("#a8c0cc"))
+	var intro := UILib.label(body, "FINISH QUESTS - RETURN HERE TO CLAIM REWARDS", 14, GameTheme.SUBTEXT)
 	intro.custom_minimum_size = Vector2(0.0, 24.0)
+	if GameState.harvest_season_open():
+		var hl := UILib.label(body, "HARVEST FEAST QUESTS PAY FEAST TOKENS - %s" % GameState.harvest_deadline_text(),
+				13, GameTheme.GOLD)
+		hl.custom_minimum_size = Vector2(0.0, 22.0)
 	if GameState.event_active():
 		var event_l := UILib.label(body, "2X COIN EVENT: REWARDS ARE DOUBLED FOR %s" % GameState.event_time_text(),
 				13, GameTheme.GOLD)
 		event_l.custom_minimum_size = Vector2(0.0, 22.0)
-	for q in GameState.quests:
+	for q in GameState.visible_quests():
 		var done := bool(q.get("done", false))
 		var claimed := bool(q.get("claimed", false))
 		var row := TownUI.row(body, 58.0)
 		var title_l := UILib.label(row, String(q.get("title", "Quest")).to_upper(), 16,
-				Color("#8d9aa6") if claimed else UILib.CREAM, true)
+				GameTheme.FAINT if claimed else UILib.CREAM, true)
 		title_l.position = Vector2(12.0, 3.0)
-		var desc_l := UILib.label(row, String(q.get("desc", "")), 12, Color("#a8c0cc"))
+		var desc_l := UILib.label(row, String(q.get("desc", "")), 12, GameTheme.SUBTEXT)
 		desc_l.position = Vector2(12.0, 23.0)
 		var need := GameState.quest_need(q)
 		var prog_text := "DONE" if done else "PROGRESS %d / %d" % [int(q.get("progress", 0)), need]
-		var prog_l := UILib.label(row, prog_text, 12, GameTheme.LEAF if done else Color("#e9d8a8"))
+		var prog_l := UILib.label(row, prog_text, 12, GameTheme.LEAF if done else GameTheme.WHEAT)
 		prog_l.position = Vector2(12.0, 41.0)
-		var reward_l := UILib.label(row, "REWARD %d" % GameState.quest_reward(q), 13, UILib.GOLD, true)
+		var reward_txt := "REWARD %d" % GameState.quest_reward(q)
+		if bool(q.get("token_reward", false)):
+			reward_txt = "REWARD %d TOKENS" % GameState.quest_reward(q)
+		var reward_l := UILib.label(row, reward_txt, 13, UILib.GOLD, true)
 		reward_l.position = Vector2(300.0, 8.0)
 		var state_l := UILib.label(row, "CLAIMED" if claimed else ("READY!" if done else "ACTIVE"), 12,
-				Color("#8d9aa6") if claimed else Color("#a8c0cc"))
+				GameTheme.FAINT if claimed else GameTheme.SUBTEXT)
 		state_l.position = Vector2(300.0, 28.0)
 		if done and not claimed:
 			TownUI.row_button(row, "CLAIM", _on_claim.bind(String(q.get("id", ""))), 100.0)
@@ -56,10 +63,14 @@ func interact() -> void:
 
 
 func _on_claim(qid: String) -> void:
+	var token_quest := false
+	for q in GameState.quests:
+		if String(q.get("id", "")) == qid and bool(q.get("token_reward", false)):
+			token_quest = true
 	var reward := GameState.claim_quest(qid)
 	if reward > 0:
-		GameState.play_sound("coin")
-		town.toast("CLAIMED %d COINS" % reward)
+		GameState.play_sound("bell" if token_quest else "coin")
+		town.toast("CLAIMED %d %s" % [reward, "TOKENS" if token_quest else "COINS"])
 		_reopen()
 	else:
 		GameState.play_sound("buzz")

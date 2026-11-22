@@ -15,3 +15,12 @@
 /simple.png.import
 /simple.apple-touch-icon.png
 /simple.apple-touch-icon.png.import
+
+# Godot import sidecars generated for committed PWA art
+build/web/*.import
+
+# Surge writes this during a deploy; each mirror owns its own domain
+build/web/CNAME
+
+# Surge deploy metadata
+build/web/.surge/

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Rebuild the playable browser build in build/web/.
 #
-# The committed build/web folder is what both hosts serve:
+# The committed build/web folder is what every host serves:
 #   * GitHub Pages -> https://timmywwe13-hub.github.io/simple/build/web/
+#   * Surge        -> https://cottage-creek-fishing.surge.sh/ (and 3 mirrors)
 #   * Netlify      -> publish directory "build/web" (see netlify.toml)
 #
 # Usage:
@@ -55,4 +56,8 @@ fi
 echo
 echo "web build ready: build/web/ ($(du -sh build/web | cut -f1))"
 echo "GitHub Pages: https://timmywwe13-hub.github.io/simple/build/web/"
+echo "Surge:        https://cottage-creek-fishing.surge.sh/"
+echo "              https://cottage-creek.surge.sh/"
+echo "              https://cottagecreek.surge.sh/"
+echo "              https://creekfishing.surge.sh/"
 echo "Netlify:      npx netlify-cli deploy --dir=build/web --prod"

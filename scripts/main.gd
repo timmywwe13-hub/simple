@@ -17,10 +17,11 @@ const STATE_STATS := 8
 const STATE_PAUSED := 9
 const STATE_UPDATES := 10
 const STATE_SETTINGS := 11
+const STATE_HARVEST := 12
 
 const WATER_RATIO := 0.60
 ## Height of the start screen card (six menu buttons now).
-const MENU_PANEL_H := 480.0
+const MENU_PANEL_H := 524.0
 ## How long a spot change crossfades its whole palette.
 const ART_FADE := 0.8
 
@@ -192,6 +193,8 @@ var in_boat := false
 var boat_pos := Vector2.ZERO
 ## True while sailing the open-water section past the edge of a spot.
 var open_water := false
+var season_art_state := ""
+var harvest_award_t := 0.0
 ## The spot we sailed away from, restored when we sail back west.
 var open_water_from := "pond"
 ## Coconut Isle is a separate shore with palms, island fish and crafting.
@@ -246,6 +249,7 @@ func _ready() -> void:
 	touch_controls.setup("fishing")
 	GameState.saved.connect(_on_saved)
 	GameState.coins_gained.connect(_on_coins_gained)
+	GameState.harvest_boat_awarded.connect(_on_harvest_boat_awarded)
 	get_tree().auto_accept_quit = false
 	_init_art()
 	_spawn_tunnel()
@@ -265,8 +269,13 @@ func _ready() -> void:
 
 ## Start from this region's palette (no crossfade on boot) and remember
 ## the horizon ratio the rest of the layout math depends on.
+func _season_id() -> String:
+	return "harvest" if GameState.harvest_season_open() else ""
+
+
 func _init_art() -> void:
-	art_target = RegionArt.get_art(region)
+	season_art_state = _season_id()
+	art_target = RegionArt.get_art(region, season_art_state)
 	art = art_target.duplicate(true)
 	art_from = art_target.duplicate(true)
 	art_t = 1.0
@@ -280,7 +289,7 @@ func _set_region(key: String) -> void:
 		return
 	region = key
 	art_from = art.duplicate(true)
-	art_target = RegionArt.get_art(key)
+	art_target = RegionArt.get_art(key, _season_id())
 	art_t = 0.0
 	water_wipe = 1.0
 	arrival_name = String(art_target.get("name", key.to_upper()))
@@ -363,9 +372,9 @@ func _spawn_tunnel() -> void:
 
 func _build_ambient_fish() -> void:
 	ambient_fish.clear()
-	var pool := FishDB.fish_pool("open" if open_water else region, weather, is_night)
+	var pool := FishDB.fish_pool("open" if open_water else region, weather, is_night, _season_id())
 	if pool.size() == 0:
-		pool = FishDB.fish_pool("pond", weather, is_night)
+		pool = FishDB.fish_pool("pond", weather, is_night, _season_id())
 	var count := 7
 	var q := GameState.quality_level()
 	if q == 0:
@@ -449,6 +458,15 @@ func _run_cheat() -> void:
 
 func _process(dt: float) -> void:
 	_key_tick()
+	# A season opening/closing mid-session crossfades the world palette in
+	# the same way a region change does.
+	if _season_id() != season_art_state:
+		season_art_state = _season_id()
+		art_from = art.duplicate(true)
+		art_target = RegionArt.get_art(region, season_art_state)
+		art_t = 0.0
+		water_wipe = 1.0
+		_build_ambient_fish()
 	_update_art(dt)
 	mouse_pos = get_viewport().get_mouse_position()
 	if _key_edge(KEY_F11):
@@ -461,6 +479,8 @@ func _process(dt: float) -> void:
 		saved_toast_t = maxf(0.0, saved_toast_t - dt)
 	if catch_card_t < 1.0:
 		catch_card_t = minf(1.0, catch_card_t + dt * 4.2)
+	if harvest_award_t > 0.0:
+		harvest_award_t = maxf(0.0, harvest_award_t - dt)
 	_update_splashes(dt)
 	_update_coin_fly(dt)
 	_update_ambient_particles(dt)
@@ -473,9 +493,19 @@ func _process(dt: float) -> void:
 		queue_redraw()
 		return
 
+	if state == STATE_HARVEST:
+		# The Harvest board is a Control overlay with its own input and
+		# close handling; the world underneath just keeps breathing.
+		if touch_controls != null:
+			touch_controls.set_context("hidden")
+		queue_redraw()
+		return
+
 	day_time = fposmod(day_time + dt * 0.02, 1.0)
 	var was_night := is_night
-	is_night = day_time > 0.75 or day_time < 0.25
+	# Harvest dusk arrives ~2 in-game hours earlier and sunrise is later.
+	var dusk_shift := 0.083 if GameState.harvest_season_open() else 0.0
+	is_night = day_time > 0.75 - dusk_shift or day_time < 0.25 + dusk_shift
 	if was_night != is_night:
 		_build_ambient_fish()
 	_update_weather(dt)
@@ -538,6 +568,16 @@ func _music_region() -> String:
 	return region
 
 
+func _on_harvest_boat_awarded() -> void:
+	# The board owns its own award reveal; only show the in-world card when
+	# the legendary catch completes the album outside the feast board.
+	if state == STATE_HARVEST:
+		return
+	harvest_award_t = 8.0
+	fx_flash(1.0)
+	msg("THE HARVEST QUEEN JOINS YOUR FLEET!")
+
+
 func _on_saved() -> void:
 	saved_toast_t = 1.8
 
@@ -597,6 +637,9 @@ func _update_splashes(dt: float) -> void:
 func _update_ambient_particles(dt: float) -> void:
 	for i in range(ambient_particles.size() - 1, -1, -1):
 		var p: Dictionary = ambient_particles[i]
+		if GameState.reduce_motion() and String(p.get("kind", "")) == "leaf":
+			ambient_particles.remove_at(i)
+			continue
 		p["life"] = float(p["life"]) - dt
 		p["pos"] = (p["pos"] as Vector2) + (p["vel"] as Vector2) * dt
 		if float(p["life"]) <= 0.0:
@@ -611,7 +654,10 @@ func _update_ambient_particles(dt: float) -> void:
 	if ambient_spawn > 0.0:
 		return
 	ambient_spawn = randf_range(0.35, 1.1) if q >= 2 else randf_range(0.8, 2.0)
-	var kinds: Array = art.get("ambient", [])
+	var kinds: Array = art.get("ambient", []).duplicate()
+	if GameState.harvest_season_open() and not GameState.reduce_motion():
+		kinds.append("leaf")
+		kinds.append("leaf")
 	if kinds.is_empty():
 		return
 	var kind := String(kinds[randi() % kinds.size()])
@@ -656,6 +702,10 @@ func _spawn_particle(kind: String) -> void:
 			pos = Vector2(randf_range(bank_w + 20.0, view_size.x - 20.0), water_line + randf_range(4.0, 30.0))
 			vel = Vector2(randf_range(-8.0, 8.0), randf_range(-22.0, -6.0))
 			life = randf_range(0.5, 1.1)
+		"leaf":
+			pos = Vector2(randf_range(-20.0, view_size.x + 20.0), randf_range(-30.0, water_line * 0.7))
+			vel = Vector2(randf_range(14.0, 42.0), randf_range(16.0, 40.0))
+			life = randf_range(5.0, 10.0)
 		_:
 			return
 	ambient_particles.append({"kind": kind, "pos": pos, "vel": vel, "life": life,
@@ -851,6 +901,7 @@ func _update_menu() -> void:
 		"start": _on_start()
 		"index": _on_index()
 		"shop": _on_shop()
+		"harvest": _on_harvest_board()
 		"stats": _on_stats()
 		"settings": _on_settings()
 		"updates": _on_updates()
@@ -1338,9 +1389,9 @@ func _lantern() -> Dictionary:
 
 
 func _select_catch() -> void:
-	var pool := FishDB.fish_pool("open" if open_water else region, weather, is_night)
+	var pool := FishDB.fish_pool("open" if open_water else region, weather, is_night, _season_id())
 	if pool.size() == 0:
-		pool = FishDB.fish_pool("pond", weather, is_night)
+		pool = FishDB.fish_pool("pond", weather, is_night, _season_id())
 	var weights := []
 	var total := 0.0
 	var boost: Array = []
@@ -1748,6 +1799,15 @@ func _on_shop(from_pause := false) -> void:
 	_refresh_shop()
 
 
+func _on_harvest_board() -> void:
+	hide_all_ui()
+	state = STATE_HARVEST
+	HarvestTable.open_board(ui_layer, func() -> void:
+		state = STATE_MENU
+		show_menu()
+	)
+
+
 func _on_stats() -> void:
 	hide_all_ui()
 	stats_panel.visible = true
@@ -1795,9 +1855,9 @@ func _build_stats() -> void:
 	bg.color = GameTheme.PANEL
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	p.add_child(bg)
-	var title := UILib.label(p, "ANGLER STATS", 30, GameTheme.CREAM, true, HORIZONTAL_ALIGNMENT_LEFT)
-	title.position = Vector2(28, 18)
-	var sub := UILib.label(p, "EVERYTHING YOU HAVE LANDED SO FAR", 15, Color("#a8c0cc"))
+	_add_leaf_sprigs(p)
+	TownUI.ribbon(p, "ANGLER STATS", Vector2(16, 8), 330.0, 42.0)
+	var sub := UILib.label(p, "EVERYTHING YOU HAVE LANDED SO FAR", 15, GameTheme.SUBTEXT)
 	sub.position = Vector2(28, 54)
 	# 12 lines do not fit the stats area on a 360px-tall window, so scroll.
 	var stats_scroll := ScrollContainer.new()
@@ -1808,6 +1868,7 @@ func _build_stats() -> void:
 	stats_scroll.offset_bottom = -100
 	stats_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	p.add_child(stats_scroll)
+	UILib.style_scroll(stats_scroll)
 	stats_label = UILib.label(stats_scroll, "", 20, GameTheme.CREAM, false, HORIZONTAL_ALIGNMENT_LEFT)
 	stats_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	stats_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
@@ -1832,7 +1893,7 @@ func _refresh_stats() -> void:
 	if stats_label == null:
 		return
 	var s := GameState.stats
-	var total_species := FishDB.all_ids().size()
+	var total_species := FishDB.all_ids(_season_id()).size()
 	var caught_species := int(round(GameState.completion_percent() * float(total_species)))
 	var hot := GameState.daily_hot_ids()
 	var hot_names: Array[String] = []
@@ -1859,6 +1920,14 @@ func _refresh_stats() -> void:
 		"2X COIN EVENT      %s" % (("LIVE - %s LEFT" % GameState.event_time_text())
 				if GameState.event_active() else "ENDED"),
 	]
+	if GameState.harvest_season_open() or GameState.harvest_tokens() > 0 			or not (GameState.harvest.get("cards", {}) as Dictionary).is_empty() 			or bool(GameState.harvest.get("boat_claimed", false)):
+		lines.append("HARVEST TOKENS     %d  (ALBUM %d / 20 - SPARES %d)" % [
+				GameState.harvest_tokens(), GameState.harvest_owned_count(),
+				GameState.harvest_spares_count()])
+		if GameState.harvest_season_open():
+			lines.append("HARVEST CLOSES     %s" % GameState.harvest_deadline_text())
+		else:
+			lines.append("HARVEST FEAST      CLOSED - RETURNS NOV 22")
 	stats_label.text = "\n".join(lines)
 	if stats_mute_btn != null:
 		stats_mute_btn.text = "SOUND: %s" % ("OFF" if GameState.muted else "ON")
@@ -1871,45 +1940,44 @@ func _build_pause() -> void:
 	ui_layer.add_child(p)
 	pause_panel = p
 	var dim := ColorRect.new()
-	dim.color = Color("#0b1320", 0.62)
+	dim.color = Color(GameTheme.DIM, 0.62)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	p.add_child(dim)
 	var card := Control.new()
 	card.size = Vector2(420.0, 420.0)
 	p.add_child(card)
 	pause_card = card
-	var bg := ColorRect.new()
-	bg.color = GameTheme.PANEL
+	var bg := Panel.new()
 	bg.size = Vector2(420.0, 420.0)
+	bg.add_theme_stylebox_override("panel", UILib.sfx_bg())
 	card.add_child(bg)
-	var border := ColorRect.new()
-	border.color = GameTheme.CREAM
-	border.position = Vector2(0.0, 0.0)
-	border.size = Vector2(420.0, 4.0)
-	card.add_child(border)
-	var title := UILib.label(card, "PAUSED", 28, GameTheme.GOLD, true, HORIZONTAL_ALIGNMENT_CENTER)
-	title.position = Vector2(0.0, 18.0)
-	title.size = Vector2(420.0, 34.0)
-	var hint := UILib.label(card, "THE FISH WILL WAIT", 14, Color("#a8c0cc"), false, HORIZONTAL_ALIGNMENT_CENTER)
+	if SeasonTheme.is_harvest():
+		var wheat := ColorRect.new()
+		wheat.color = GameTheme.WHEAT
+		wheat.position = Vector2(14.0, 3.0)
+		wheat.size = Vector2(392.0, 1.0)
+		card.add_child(wheat)
+	TownUI.ribbon(card, "PAUSED", Vector2(60.0, 10.0), 300.0, 40.0)
+	var hint := UILib.label(card, "THE FISH WILL WAIT", 14, GameTheme.SUBTEXT, false, HORIZONTAL_ALIGNMENT_CENTER)
 	hint.position = Vector2(0.0, 54.0)
 	hint.size = Vector2(420.0, 22.0)
 	var resume := UILib.button(card, "RESUME", _resume_game, 18, GameTheme.LEAF,
-			Color("#7fbd70"), Color("#4f7f45"), UILib.CREAM, Vector2(340.0, 44.0))
+			UILib.LEAF.lightened(0.12), UILib.LEAF.darkened(0.25), UILib.CREAM, Vector2(340.0, 44.0))
 	resume.position = Vector2(40.0, 84.0)
 	pause_mute_btn = UILib.button(card, "SOUND: ON", _toggle_mute, 18, GameTheme.PANEL_LIGHT,
-			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
+			GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS, UILib.CREAM, Vector2(340.0, 44.0))
 	pause_mute_btn.position = Vector2(40.0, 132.0)
 	var shop := UILib.button(card, "SHOP & CRAFT", _open_shop_from_pause, 18, GameTheme.PANEL_LIGHT,
-			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
+			GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS, UILib.CREAM, Vector2(340.0, 44.0))
 	shop.position = Vector2(40.0, 180.0)
 	var updates := UILib.button(card, "WHAT'S NEW", _on_updates.bind(true), 18, GameTheme.PANEL_LIGHT,
-			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
+			GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS, UILib.CREAM, Vector2(340.0, 44.0))
 	updates.position = Vector2(40.0, 228.0)
 	var settings := UILib.button(card, "SETTINGS", _on_settings.bind(true), 18, GameTheme.PANEL_LIGHT,
-			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
+			GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS, UILib.CREAM, Vector2(340.0, 44.0))
 	settings.position = Vector2(40.0, 276.0)
 	var menu := UILib.button(card, "MAIN MENU", _pause_to_menu, 18, GameTheme.PANEL_LIGHT,
-			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(340.0, 44.0))
+			GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS, UILib.CREAM, Vector2(340.0, 44.0))
 	menu.position = Vector2(40.0, 324.0)
 	p.visible = false
 	_layout_pause_card()
@@ -1938,10 +2006,10 @@ func _build_updates() -> void:
 	bg.color = GameTheme.PANEL
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	p.add_child(bg)
-	var title := UILib.label(p, "WHAT'S NEW", 30, GameTheme.CREAM, true, HORIZONTAL_ALIGNMENT_LEFT)
-	title.position = Vector2(28, 18)
+	_add_leaf_sprigs(p)
+	TownUI.ribbon(p, "WHAT'S NEW", Vector2(16, 8), 330.0, 42.0)
 	var sub := UILib.label(p, "V%s - EVERYTHING IN THE LATEST UPDATE" % ChangelogLib.VERSION, 15,
-			Color("#a8c0cc"))
+			GameTheme.SUBTEXT)
 	sub.position = Vector2(28, 54)
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1950,6 +2018,7 @@ func _build_updates() -> void:
 	scroll.offset_right = -28
 	scroll.offset_bottom = -76
 	p.add_child(scroll)
+	UILib.style_scroll(scroll)
 	updates_body = VBoxContainer.new()
 	updates_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	updates_body.add_theme_constant_override("separation", 4)
@@ -1987,6 +2056,7 @@ func _build_settings() -> void:
 	bg.color = GameTheme.PANEL
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	p.add_child(bg)
+	_add_leaf_sprigs(p)
 	# A fixed 640x360 content sheet, scaled to fit short windows so the
 	# bottom row never falls off a landscape phone (or the 640x360 min).
 	var content := Control.new()
@@ -1994,10 +2064,9 @@ func _build_settings() -> void:
 	content.size = Vector2(640.0, 360.0)
 	p.add_child(content)
 	settings_content = content
-	var title := UILib.label(content, "SETTINGS", 26, GameTheme.CREAM, true, HORIZONTAL_ALIGNMENT_LEFT)
-	title.position = Vector2(28, 12)
+	TownUI.ribbon(content, "SETTINGS", Vector2(20, 4), 250.0, 38.0)
 	var sub := UILib.label(content, "SOUND, SCREEN AND TOUCH OPTIONS - SAVED AUTOMATICALLY", 12,
-			Color("#a8c0cc"))
+			GameTheme.SUBTEXT)
 	sub.position = Vector2(28, 46)
 
 	var rows := [
@@ -2019,6 +2088,23 @@ func _build_settings() -> void:
 		slider.size = Vector2(330, 44)
 		slider.value = float(GameState.settings.get(key, 0.7))
 		slider.value_changed.connect(_on_volume_changed.bind(key))
+		# wooden knob on a wheat track
+		var track := StyleBoxFlat.new()
+		track.bg_color = GameTheme.HUSK
+		track.set_corner_radius_all(5)
+		track.content_margin_top = 3.0
+		track.content_margin_bottom = 3.0
+		slider.add_theme_stylebox_override("slider", track)
+		var filled := StyleBoxFlat.new()
+		filled.bg_color = GameTheme.WHEAT
+		filled.set_corner_radius_all(5)
+		slider.add_theme_stylebox_override("grabber_area", filled)
+		var filled_hi := filled.duplicate() as StyleBoxFlat
+		filled_hi.bg_color = GameTheme.GOLD
+		slider.add_theme_stylebox_override("grabber_area_highlight", filled_hi)
+		var knob := _wood_knob_texture()
+		slider.add_theme_icon_override("grabber", knob)
+		slider.add_theme_icon_override("grabber_highlight", knob)
 		content.add_child(slider)
 		settings_sliders[key] = slider
 		var val := UILib.label(content, "70%", 16, GameTheme.GOLD, true, HORIZONTAL_ALIGNMENT_RIGHT)
@@ -2037,14 +2123,14 @@ func _build_settings() -> void:
 	settings_motion_btn.size = Vector2(274, 44)
 	settings_motion_btn.custom_minimum_size = Vector2(274, 44)
 
-	var touch_lab := UILib.label(content, "TOUCH CONTROLS", 14, Color("#a8c0cc"))
+	var touch_lab := UILib.label(content, "TOUCH CONTROLS", 14, GameTheme.SUBTEXT)
 	touch_lab.position = Vector2(40, 240)
 	settings_touch_btn = UILib.button(content, "TOUCH: AUTO", _cycle_touch_ui, 15,
 			GameTheme.PANEL_LIGHT)
 	settings_touch_btn.position = Vector2(222, 234)
 	settings_touch_btn.size = Vector2(170, 44)
 	settings_touch_btn.custom_minimum_size = Vector2(170, 44)
-	var quality_lab := UILib.label(content, "QUALITY", 14, Color("#a8c0cc"))
+	var quality_lab := UILib.label(content, "QUALITY", 14, GameTheme.SUBTEXT)
 	quality_lab.position = Vector2(408, 240)
 	settings_quality_btn = UILib.button(content, "QUALITY: AUTO", _cycle_quality, 15,
 			GameTheme.PANEL_LIGHT)
@@ -2053,11 +2139,11 @@ func _build_settings() -> void:
 	settings_quality_btn.custom_minimum_size = Vector2(118, 44)
 
 	settings_reset_btn = UILib.button(content, "RESET PROGRESS", _on_reset_progress, 15,
-			Color("#6b2f2f"), Color("#8a3a3a"), Color("#4a2020"))
+			UILib.CRANBERRY, UILib.EMBER, UILib.CRANBERRY.darkened(0.3))
 	settings_reset_btn.position = Vector2(40, 288)
 	settings_reset_btn.size = Vector2(270, 44)
 	settings_reset_btn.custom_minimum_size = Vector2(270, 44)
-	var save_lab := UILib.label(content, "PROGRESS IS SAVED TO THIS DEVICE", 12, Color("#7f8f9e"))
+	var save_lab := UILib.label(content, "PROGRESS IS SAVED TO THIS DEVICE", 12, UILib.FAINT)
 	save_lab.position = Vector2(40, 338)
 
 	var b := UILib.button(content, "BACK", _on_back, 18, GameTheme.PANEL_LIGHT)
@@ -2066,6 +2152,21 @@ func _build_settings() -> void:
 	b.custom_minimum_size = Vector2(174, 44)
 	p.visible = false
 	_layout_settings_content()
+
+
+## Small round wooden knob for the settings sliders.
+func _wood_knob_texture() -> ImageTexture:
+	var img := Image.create(18, 18, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for y in range(18):
+		for x in range(18):
+			var d := Vector2(float(x) - 8.5, float(y) - 8.5).length()
+			if d <= 8.0:
+				var c := GameTheme.WOOD if d > 6.0 else GameTheme.WOOD.lightened(0.12)
+				if d < 3.0:
+					c = GameTheme.WOOD_DARK
+				img.set_pixel(x, y, c)
+	return ImageTexture.create_from_image(img)
 
 
 func _layout_settings_content() -> void:
@@ -2226,19 +2327,19 @@ func _build_index() -> void:
 	bg.color = GameTheme.PANEL
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	p.add_child(bg)
-	var title := UILib.label(p, "FISH INDEX", 30, GameTheme.CREAM, true, HORIZONTAL_ALIGNMENT_LEFT)
-	title.position = Vector2(24, 16)
+	_add_leaf_sprigs(p)
+	TownUI.ribbon(p, "FISH INDEX", Vector2(16, 8), 330.0, 42.0)
 	index_comp_label = UILib.label(p, "COLLECTION: 0%", 18, GameTheme.GOLD, true, HORIZONTAL_ALIGNMENT_LEFT)
 	index_comp_label.position = Vector2(24, 52)
 	index_filter_btn = UILib.button(p, "REGION: ALL", _cycle_index_region, 14, GameTheme.PANEL_LIGHT,
-			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(190.0, 40.0))
+			GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS, UILib.CREAM, Vector2(190.0, 40.0))
 	index_filter_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	index_filter_btn.offset_left = -430
 	index_filter_btn.offset_top = 18
 	index_filter_btn.offset_right = -240
 	index_filter_btn.offset_bottom = 58
 	index_uncaught_btn = UILib.button(p, "SHOW: ALL", _toggle_index_uncaught, 14, GameTheme.PANEL_LIGHT,
-			Color("#55708a"), Color("#2c3d4d"), UILib.CREAM, Vector2(190.0, 40.0))
+			GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS, UILib.CREAM, Vector2(190.0, 40.0))
 	index_uncaught_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	index_uncaught_btn.offset_left = -220
 	index_uncaught_btn.offset_top = 18
@@ -2261,6 +2362,7 @@ func _build_index() -> void:
 	list.item_selected.connect(_on_index_selected)
 	p.add_child(list)
 	index_list = list
+	UILib.style_item_list(list)
 
 	# right: the detail pane (FishArt, rarity, description, where/when, PB)
 	index_detail = Control.new()
@@ -2276,7 +2378,7 @@ func _build_index() -> void:
 	index_detail.clip_contents = true
 	p.add_child(index_detail)
 	var dbg := ColorRect.new()
-	dbg.color = Color("#161d2b")
+	dbg.color = GameTheme.PANEL.darkened(0.08)
 	dbg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	index_detail.add_child(dbg)
 
@@ -2319,7 +2421,7 @@ func _build_index() -> void:
 	index_detail_rarity.position = Vector2(14.0, 156.0)
 	index_detail_rarity.size = Vector2(150.0, 26.0)
 
-	index_detail_desc = UILib.label(index_detail_content, "", 14, Color("#c2d2dc"), false,
+	index_detail_desc = UILib.label(index_detail_content, "", 14, GameTheme.SUBTEXT, false,
 			HORIZONTAL_ALIGNMENT_LEFT)
 	index_detail_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	index_detail_desc.anchor_left = 0.0
@@ -2350,7 +2452,7 @@ func _build_index() -> void:
 	index_detail_stats.offset_top = 296.0
 	index_detail_stats.offset_bottom = 322.0
 
-	index_detail_region = UILib.label(index_detail_content, "", 13, Color("#a8c0cc"), false,
+	index_detail_region = UILib.label(index_detail_content, "", 13, GameTheme.SUBTEXT, false,
 			HORIZONTAL_ALIGNMENT_LEFT)
 	index_detail_region.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	index_detail_region.anchor_left = 0.0
@@ -2373,7 +2475,7 @@ func _build_index() -> void:
 ## Skin a pill label with a new colour (used for the rarity tag).
 func _set_pill(label: Label, text: String, color: Color) -> void:
 	label.text = text
-	label.add_theme_color_override("font_color", Color("#12202c"))
+	label.add_theme_color_override("font_color", UILib.INK)
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = color
 	sb.set_corner_radius_all(12)
@@ -2389,7 +2491,8 @@ func _refresh_index() -> void:
 		return
 	index_list.clear()
 	index_shown_ids.clear()
-	var ids := FishDB.all_ids()
+	var season := _season_id()
+	var ids := FishDB.all_ids(season)
 	var total := ids.size()
 	var caught := 0
 	var shown := 0
@@ -2400,7 +2503,10 @@ func _refresh_index() -> void:
 		var caught_flag := bool(entry.get("caught", false))
 		if caught_flag:
 			caught += 1
-		if index_filter_region != "" and String(f.get("region", "")) != index_filter_region:
+		if index_filter_region == "harvest":
+			if String(f.get("season", "")) != "harvest":
+				continue
+		elif index_filter_region != "" and String(f.get("region", "")) != index_filter_region:
 			continue
 		if index_only_uncaught and caught_flag:
 			continue
@@ -2410,8 +2516,9 @@ func _refresh_index() -> void:
 			name_val = "???"
 		var rarity := String(f.get("rarity", "Common"))
 		var color := GameTheme.get_rarity_color(rarity)
-		var idx := index_list.add_item("  %s   [%s]" % [name_val, rarity.to_upper()])
-		index_list.set_item_custom_fg_color(idx, color if caught_flag else Color("#5c6a78"))
+		var season_tag := "  [HARVEST]" if String(f.get("season", "")) == "harvest" else ""
+		var idx := index_list.add_item("  %s   [%s]%s" % [name_val, rarity.to_upper(), season_tag])
+		index_list.set_item_custom_fg_color(idx, color if caught_flag else UILib.FAINT)
 		index_list.set_item_metadata(idx, fid_s)
 		index_shown_ids.append(fid_s)
 	if shown == 0:
@@ -2421,6 +2528,10 @@ func _refresh_index() -> void:
 	index_comp_label.text = "COLLECTION: %d / %d  (%.0f%%)   SHOWING %d" % [caught, total, pct, shown]
 	if index_filter_btn != null:
 		var region_name := "ALL" if index_filter_region == "" else RegionArt.display(index_filter_region).to_upper()
+		if index_filter_region == "harvest":
+			region_name = "HARVEST"
+			if not GameState.harvest_season_open():
+				region_name = "HARVEST (CLOSED)"
 		index_filter_btn.text = "REGION: %s" % region_name
 	if index_uncaught_btn != null:
 		index_uncaught_btn.text = "SHOW: %s" % ("UNCAUGHT" if index_only_uncaught else "ALL")
@@ -2472,7 +2583,7 @@ func _show_index_detail(fid: String) -> void:
 		index_detail_fish = {}
 		index_detail_caught = false
 		index_detail_name.text = "SELECT A FISH"
-		_set_pill(index_detail_rarity, "INDEX", Color("#4b5a70"))
+		_set_pill(index_detail_rarity, "INDEX", UILib.PANEL_LIGHT)
 		index_detail_desc.text = "Pick a species to see its art, rarity, where and when it bites, and your personal best."
 		index_detail_where.text = ""
 		index_detail_stats.text = "COLLECTION: %.0f%%" % (GameState.completion_percent() * 100.0)
@@ -2486,9 +2597,10 @@ func _show_index_detail(fid: String) -> void:
 	var rarity := String(f.get("rarity", "Common"))
 	index_detail_fish = f
 	index_detail_caught = caught
-	index_detail_name.text = String(f.get("name", fid)).to_upper() if caught else "???"
+	var season_suffix := "  [HARVEST]" if String(f.get("season", "")) == "harvest" else ""
+	index_detail_name.text = (String(f.get("name", fid)).to_upper() if caught else "???") + season_suffix
 	_set_pill(index_detail_rarity, rarity.to_upper(),
-			GameTheme.get_rarity_color(rarity) if caught else Color("#485566"))
+			GameTheme.get_rarity_color(rarity) if caught else UILib.PANEL_LIGHT)
 	if caught:
 		index_detail_desc.text = String(f.get("desc", ""))
 	else:
@@ -2500,7 +2612,7 @@ func _show_index_detail(fid: String) -> void:
 	else:
 		index_detail_stats.text = "PB: --    CAUGHT: 0"
 	var region_name := String(f.get("region", "pond"))
-	var region_fishes := FishDB.fish_by_region(region_name)
+	var region_fishes := FishDB.fish_by_region(region_name, _season_id())
 	var region_caught := 0
 	for rf in region_fishes:
 		var rid := String(rf.get("id", ""))
@@ -2534,6 +2646,8 @@ func _index_where_text(f: Dictionary, caught: bool) -> String:
 		when += " - " + weather.to_upper()
 	if bool(f.get("bait_only", false)):
 		when += " - NEEDS BAIT"
+	if String(f.get("season", "")) == "harvest":
+		when += " - HARVEST FEAST"
 	return "WHERE: %s\nWHEN: %s" % [where, when]
 
 
@@ -2544,13 +2658,15 @@ func _draw_index_art() -> void:
 		return
 	var r := Rect2(Vector2(10.0, 4.0), index_detail_art.size - Vector2(20.0, 8.0))
 	if index_detail_fish.is_empty():
-		RegionArt.draw_glyph(index_detail_art, "pond", r.get_center(), 40.0, Color("#3b4a63"))
+		RegionArt.draw_glyph(index_detail_art, "pond", r.get_center(), 40.0, UILib.PANEL_LIGHT)
 		return
 	FishArt.draw_fish(index_detail_art, r, index_detail_fish, not index_detail_caught, 1.0)
 
 
 func _cycle_index_region() -> void:
 	var options := ["", "pond", "river", "lake", "ocean", "open", "island"]
+	if GameState.harvest_season_open():
+		options.append("harvest")
 	var at := options.find(index_filter_region)
 	index_filter_region = String(options[(at + 1) % options.size()])
 	index_selected = 0
@@ -2575,8 +2691,8 @@ func _build_shop() -> void:
 	bg.color = GameTheme.PANEL
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	p.add_child(bg)
-	var title := UILib.label(p, "TACKLE SHOP", 30, GameTheme.CREAM, true, HORIZONTAL_ALIGNMENT_LEFT)
-	title.position = Vector2(24, 18)
+	_add_leaf_sprigs(p)
+	TownUI.ribbon(p, "TACKLE SHOP", Vector2(16, 8), 330.0, 42.0)
 	var coins := UILib.label(p, "", 20, GameTheme.GOLD, true, HORIZONTAL_ALIGNMENT_RIGHT)
 	coins.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	coins.offset_left = -320
@@ -2593,6 +2709,7 @@ func _build_shop() -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	p.add_child(scroll)
 	shop_scroll = scroll
+	UILib.style_scroll(scroll)
 	shop_content = VBoxContainer.new()
 	shop_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	shop_content.add_theme_constant_override("separation", 4)
@@ -2654,6 +2771,8 @@ func _shop_cat(title: String, category: String, buy_func: Callable) -> void:
 	var db: Dictionary = ShopDB.category(category)
 	for id in db.keys():
 		var d: Dictionary = db[id]
+		if String(d.get("season", "")) == "harvest" and not GameState.harvest_season_open():
+			continue
 		var is_bait := category == "baits"
 		var owned := bool(d.get("owned", false)) and not is_bait
 		var equipped := String(GameState.gear.get(GameState.gear_key(category), "")) == String(id)
@@ -2663,7 +2782,7 @@ func _shop_cat(title: String, category: String, buy_func: Callable) -> void:
 		shop_content.add_child(row)
 		var name_l := UILib.label(row, String(d.get("name", id)), 17, GameTheme.CREAM, true)
 		name_l.position = Vector2(10, 6)
-		var desc_l := UILib.label(row, String(d.get("desc", "")), 13, Color("#a8c0cc"), false)
+		var desc_l := UILib.label(row, String(d.get("desc", "")), 13, GameTheme.SUBTEXT, false)
 		desc_l.position = Vector2(10, 26)
 		var stat_l := UILib.label(row, _stat_line(category, d), 13, GameTheme.LEAF, false)
 		stat_l.position = Vector2(330, 10)
@@ -2672,7 +2791,9 @@ func _shop_cat(title: String, category: String, buy_func: Callable) -> void:
 		# free, so the player can switch between the baits they own.
 		var charges := GameState.bait_count(String(id)) if is_bait else 0
 		var btn_text := "BUY %d" % cost
-		if is_bait:
+		if String(d.get("season", "")) == "harvest":
+			btn_text = "EQUIPPED" if equipped else ("EQUIP" if owned else "BUY %d TOKENS" % int(d.get("token_cost", 0)))
+		elif is_bait:
 			if equipped and charges > 0:
 				btn_text = "BUY %d" % cost
 			elif charges > 0:
@@ -2697,7 +2818,7 @@ func _craft_section() -> void:
 	t.custom_minimum_size = Vector2(0.0, 28)
 	var note := UILib.label(shop_content,
 			"COCONUTS: %d - CHOP PALMS ON THE ISLE (THEY REGROW IN 20 MIN)" % GameState.coconuts,
-			13, Color("#a8c0cc"), false)
+			13, GameTheme.SUBTEXT, false)
 	note.custom_minimum_size = Vector2(0.0, 20)
 	var axe_text := "OWNED"
 	var axe_desc := "Palm axe: 3 coconuts per tree."
@@ -2727,7 +2848,7 @@ func _craft_row(item_name: String, desc: String, stat: String, btn_text: String,
 	shop_content.add_child(row)
 	var name_l := UILib.label(row, item_name, 17, GameTheme.CREAM, true)
 	name_l.position = Vector2(10, 6)
-	var desc_l := UILib.label(row, desc, 12, Color("#a8c0cc"), false)
+	var desc_l := UILib.label(row, desc, 12, GameTheme.SUBTEXT, false)
 	desc_l.position = Vector2(10, 26)
 	var stat_l := UILib.label(row, stat, 13, GameTheme.LEAF, false)
 	stat_l.position = Vector2(330, 10)
@@ -2840,16 +2961,18 @@ func _menu_button_rects() -> Array:
 	var vw := view_size.x / sc
 	var vh := view_size.y / sc
 	var bw := 260.0
-	var bh := 36.0
+	var bh := 34.0
 	var bx := (vw - bw) * 0.5
-	var by := (vh - MENU_PANEL_H) * 0.5 + 150.0
+	var by := (vh - MENU_PANEL_H) * 0.5 + 146.0
 	var defs := [
 		{"id": "start", "y": by, "label": "START FISHING"},
-		{"id": "index", "y": by + 40.0, "label": "FISH INDEX"},
-		{"id": "shop", "y": by + 80.0, "label": "TACKLE SHOP"},
-		{"id": "stats", "y": by + 120.0, "label": "STATS & SOUND"},
-		{"id": "settings", "y": by + 160.0, "label": "SETTINGS"},
-		{"id": "updates", "y": by + 200.0,
+		{"id": "index", "y": by + 37.0, "label": "FISH INDEX"},
+		{"id": "shop", "y": by + 74.0, "label": "TACKLE SHOP"},
+		{"id": "harvest", "y": by + 111.0,
+				"label": "HARVEST FEAST" if GameState.harvest_season_open() else "FEAST & ALBUM"},
+		{"id": "stats", "y": by + 148.0, "label": "STATS & SOUND"},
+		{"id": "settings", "y": by + 185.0, "label": "SETTINGS"},
+		{"id": "updates", "y": by + 222.0,
 				"label": "WHAT'S NEW!" if ChangelogLib.is_unseen() else "WHAT'S NEW"},
 	]
 	var out: Array = []
@@ -2897,12 +3020,55 @@ func _ui_panel(r: Rect2, fill: Color, border: Color, bw := 4.0) -> void:
 	_pixel_rect(Rect2(r.position.x + r.size.x - bw, r.position.y, bw, r.size.y), border)
 
 
+## Static leaf sprigs in the corners of a full-screen board. They ignore
+## input and never animate, so reduce_motion leaves them untouched.
+func _add_leaf_sprigs(parent: Control) -> void:
+	if not SeasonTheme.is_harvest():
+		return
+	var c := Control.new()
+	c.set_anchors_preset(Control.PRESET_FULL_RECT)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(c)
+	c.draw.connect(func() -> void:
+		_draw_leaf_sprig(c, Vector2(18.0, 16.0))
+		_draw_leaf_sprig(c, c.size - Vector2(62.0, 48.0))
+	)
+
+
+func _draw_leaf_sprig(c: Control, o: Vector2) -> void:
+	c.draw_line(o, o + Vector2(30.0, 20.0), GameTheme.WOOD_DARK, 2.0)
+	for i in range(4):
+		var p := o + Vector2(8.0 + float(i) * 7.0, 5.0 + float(i) * 4.0)
+		var col: Color = [GameTheme.PUMPKIN, GameTheme.GOLD, GameTheme.EMBER, GameTheme.LEAF][i]
+		c.draw_colored_polygon(PackedVector2Array([p, p + Vector2(10.0, -5.0),
+			p + Vector2(12.0, 4.0)]), col)
+
+
+## Notched ribbon banner behind a screen title.
+func _draw_ribbon_bg(r: Rect2, fill: Color, border: Color) -> void:
+	var notch := minf(14.0, r.size.x * 0.08)
+	var pts := PackedVector2Array([
+		Vector2(r.position.x + notch, r.position.y),
+		Vector2(r.position.x + r.size.x - notch, r.position.y),
+		Vector2(r.position.x + r.size.x, r.position.y + r.size.y * 0.5),
+		Vector2(r.position.x + r.size.x - notch, r.position.y + r.size.y),
+		Vector2(r.position.x + notch, r.position.y + r.size.y),
+		Vector2(r.position.x, r.position.y + r.size.y * 0.5),
+	])
+	draw_colored_polygon(pts, fill)
+	var edge := PackedVector2Array(pts)
+	edge.append(pts[0])
+	draw_polyline(edge, border, 2.0)
+	_pixel_rect(Rect2(r.position.x + notch + 4.0, r.position.y + 1.0,
+			maxf(0.0, r.size.x - notch * 2.0 - 8.0), 2.0), GameTheme.WHEAT)
+
+
 func _hud_panel(txt: String, anchor_right: bool) -> Rect2:
 	var w := PixFont.text_width(txt, 3) + 24.0
 	var h := 34.0
 	var x := 12.0 if not anchor_right else view_size.x - w - 12.0
 	var r := Rect2(x, 12.0, w, h)
-	_ui_panel(r, Color("#141c2c", 0.8), Color("#3b4a63", 0.9))
+	_ui_panel(r, Color(GameTheme.PANEL.darkened(0.15), 0.8), Color(GameTheme.PANEL_LIGHT, 0.9))
 	PixFont.draw_text_shadowed(self, Vector2(x + 12.0, 20.0), txt, GameTheme.CREAM,
 			Color("#050a12", 0.65), 3, 1, 1)
 	return r
@@ -2937,7 +3103,7 @@ func _draw() -> void:
 
 	draw_set_transform(Vector2.ZERO)
 
-	if state != STATE_MENU:
+	if state != STATE_MENU and state != STATE_HARVEST:
 		_draw_hud()
 	if state == STATE_MENU:
 		_draw_menu()
@@ -2945,6 +3111,8 @@ func _draw() -> void:
 		_draw_reel_meter()
 	if state == STATE_CAUGHT:
 		_draw_catch_popup()
+	if harvest_award_t > 0.0:
+		_draw_harvest_award()
 	_draw_coin_fly()
 	if hurt_flash > 0.0:
 		draw_rect(Rect2(-40.0, -40.0, view_size.x + 80.0, view_size.y + 80.0),
@@ -3387,6 +3555,14 @@ func _draw_ambient_particles(t: float) -> void:
 				draw_rect(Rect2(p.x - w * 0.3, p.y - 5.0, w * 0.6, 5.0), Color(0.9, 0.95, 1.0, 0.04 * k))
 			"spray":
 				_pixel_rect(Rect2(p.x - 1.5, p.y - 1.5, 3.0, 3.0), Color(0.94, 0.99, 1.0, k * 0.75))
+			"leaf":
+				var lc: Color = [GameTheme.PUMPKIN, GameTheme.GOLD, GameTheme.EMBER, GameTheme.CRANBERRY][int(seed) % 4]
+				lc.a = minf(1.0, k * 2.0)
+				var a := t * 1.6 + seed
+				var v := Vector2(cos(a), sin(a)) * 5.0
+				draw_colored_polygon(PackedVector2Array([
+					p + Vector2(-v.y, v.x), p + v + Vector2(v.x, -v.y) * 0.5,
+					p - Vector2(-v.y, v.x) * 0.8, p - v * 0.6]), lc)
 			_:
 				pass
 
@@ -3453,6 +3629,8 @@ func _draw_region_props(t: float) -> void:
 				_prop_jetty(nf)
 			_:
 				pass
+	if GameState.harvest_season_open() and not open_water:
+		_draw_harvest_dressing(t, nf)
 
 
 ## A short plank jetty reaching from the island beach into the lagoon.
@@ -3611,9 +3789,10 @@ func _prop_cabin(t: float, nf: float) -> void:
 	var cabin := GameTheme.WOOD.lerp(Color("#221f22"), nf * 0.5)
 	_pixel_rect(Rect2(cx - 14.0, base - 24.0, 28.0, 18.0), cabin)
 	_pixel_rect(Rect2(cx - 18.0, base - 30.0, 36.0, 7.0), cabin.darkened(0.25))
-	_pixel_rect(Rect2(cx + 3.0, base - 20.0, 6.0, 6.0), Color("#f2c14e"))
-	# chimney smoke
-	for i in range(5):
+	_pixel_rect(Rect2(cx + 3.0, base - 20.0, 6.0, 6.0), GameTheme.GOLD)
+	# chimney smoke: the harvest fire burns heavier
+	var puffs := 9 if GameState.harvest_season_open() else 5
+	for i in range(puffs):
 		var sy := base - 38.0 - float(i) * 8.0 + fposmod(t * 6.0, 8.0)
 		var sx := cx + 8.0 + sin(t * 0.8 + float(i)) * (2.0 + float(i) * 1.2)
 		_pixel_rect(Rect2(sx, sy, 5.0 + float(i), 4.0 + float(i)), Color(0.9, 0.92, 0.95, 0.22))
@@ -3696,7 +3875,7 @@ func _draw_palms(t: float) -> void:
 			_pixel_rect(Rect2(px - 8.0, py - 11.0, 16.0, 3.0), GameTheme.CREAM)
 			var label := _clock_text(left)
 			var w := PixFont.text_width(label, 2) + 16.0
-			_ui_panel(Rect2(px - w * 0.5, py - 58.0, w, 26.0), Color("#141c2c", 0.9), GameTheme.GOLD, 2.0)
+			_ui_panel(Rect2(px - w * 0.5, py - 58.0, w, 26.0), Color(GameTheme.PANEL.darkened(0.15), 0.9), GameTheme.GOLD, 2.0)
 			PixFont.draw_text_centered(self, px, py - 54.0, label, GameTheme.GOLD, 2, 1)
 			continue
 		var trunk := Color("#8a643a").darkened(nf * 0.5)
@@ -3751,6 +3930,11 @@ func _draw_fisher(t: float) -> void:
 		_draw_boat_at(t, Vector2(bank_w + 30.0, _boat_surface_y()), true, false)
 	else:
 		_draw_boat_at(t, Vector2(bank_w + 44.0, _boat_surface_y()), true, false)
+
+	# the Harvest Lantern casts a warm halo after dark
+	if is_night and String(GameState.gear.get("lantern", "")) == "lantern_harvest":
+		_draw_pixel_circle(o + Vector2(6.0, -28.0), 30.0, Color(1.0, 0.70, 0.30, 0.11), 6.0)
+		_draw_pixel_circle(o + Vector2(6.0, -28.0), 18.0, Color(1.0, 0.78, 0.40, 0.10), 5.0)
 
 	if on_foot:
 		_draw_ground_shadow(Vector2(o.x, bank_top + 1.0), 14.0 + ratio * 1.5, 4.0,
@@ -3891,6 +4075,12 @@ func _draw_boat_at(t: float, c: Vector2, moored: bool, front: bool) -> void:
 			hull_dark = Color("#7c2f24")
 			rim = Color("#d8b088")
 			cabin = true
+		"boat_harvest":
+			w = 138.0
+			hull = Color("#a3662f")
+			hull_dark = Color("#4a2d17")
+			rim = Color("#f2b03c")
+			cabin = false
 	var bob := sin(t * 2.4 + 1.0) * 1.5 if moored else sin(t * 1.9) * 2.0
 	var b := Vector2(c.x, c.y + bob)
 	var hw := w * 0.5
@@ -3941,7 +4131,39 @@ func _draw_boat_at(t: float, c: Vector2, moored: bool, front: bool) -> void:
 	for i in range(3):
 		_pixel_rect(Rect2(b.x - hw + 16.0 + float(i) * (w - 40.0) * 0.5, b.y + 2.0, 2.0, 6.0),
 				hull.darkened(0.22))
+	if id == "boat_harvest":
+		_draw_harvest_boat_details(b, hw, w)
 	_draw_hull_waterline(b.x, hw, w)
+
+
+## The Harvest Queen: varnished planks, a leaf garland on the bow, a stern
+## lantern, a pennant and a glassy waterline.
+func _draw_harvest_boat_details(b: Vector2, hw: float, w: float) -> void:
+	# gilded gunwale plank
+	_pixel_rect(Rect2(b.x - hw + 2.0, b.y + 1.0, w - 4.0, 2.0), GameTheme.GOLD)
+	_pixel_rect(Rect2(b.x - hw + 6.0, b.y + 10.0, w - 12.0, 2.0), GameTheme.GOLD.darkened(0.3))
+	# leaf garland draped over the bow
+	for i in range(7):
+		var lx := b.x - hw + 10.0 + float(i) * 5.0
+		var ly := b.y - 6.0 + sin(float(i) * 1.1) * 2.0 + float(i) * 0.8
+		var lc: Color = [GameTheme.PUMPKIN, GameTheme.EMBER, GameTheme.GOLD, GameTheme.LEAF][i % 4]
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(lx, ly), Vector2(lx + 5.0, ly - 3.0), Vector2(lx + 6.0, ly + 2.0)]), lc)
+	# stern lantern on a short post
+	_pixel_rect(Rect2(b.x + hw - 16.0, b.y - 24.0, 3.0, 18.0), GameTheme.WOOD_DARK)
+	_pixel_rect(Rect2(b.x + hw - 19.0, b.y - 30.0, 9.0, 8.0), GameTheme.HUSK)
+	var glow := GameTheme.GOLD
+	glow.a = 0.28
+	draw_circle(Vector2(b.x + hw - 14.5, b.y - 26.0), 12.0, glow)
+	_pixel_rect(Rect2(b.x + hw - 18.0, b.y - 29.0, 7.0, 6.0), GameTheme.GOLD)
+	# pennant at the bow
+	_pixel_rect(Rect2(b.x - hw + 2.0, b.y - 34.0, 2.0, 30.0), GameTheme.WOOD_DARK)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(b.x - hw + 4.0, b.y - 34.0), Vector2(b.x - hw + 22.0, b.y - 29.0),
+		Vector2(b.x - hw + 4.0, b.y - 24.0)]), GameTheme.CRANBERRY)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(b.x - hw + 4.0, b.y - 34.0), Vector2(b.x - hw + 16.0, b.y - 31.0),
+		Vector2(b.x - hw + 4.0, b.y - 28.0)]), GameTheme.GOLD)
 
 
 ## Water lapping at the hull where it meets the surface, so the boat reads
@@ -3953,6 +4175,68 @@ func _draw_hull_waterline(bx: float, hw: float, w: float) -> void:
 	for i in range(3):
 		_pixel_rect(Rect2(bx - hw + 4.0 + float(i) * (w - 16.0) * 0.5, water_line - 3.0,
 				10.0, 2.0), Color(surf.r, surf.g, surf.b, 0.35))
+
+
+## Autumn dressing on the bank: pumpkins, corn-stalk bundles, straw bales,
+## a lit quay lantern in the Deep Sea and leaves drifting on the water.
+## Pure decoration - it never changes a hit target or a fish pool.
+func _draw_harvest_dressing(t: float, nf: float) -> void:
+	var straw := GameTheme.WHEAT.lerp(Color("#3a2a1a"), nf * 0.30)
+	var straw_dark := straw.darkened(0.25)
+	var glow := Color(1.0, 0.62, 0.22, 0.10 + nf * 0.12)
+	# pumpkins tucked along the bank
+	var spots := [Vector2(bank_w * 0.08, bank_top + 26.0), Vector2(bank_w * 0.30, bank_top + 20.0),
+		Vector2(bank_w * 0.62, bank_top + 30.0), Vector2(bank_w * 0.88, bank_top + 24.0)]
+	for i in range(spots.size()):
+		var c: Vector2 = spots[i]
+		var rad := 8.0 + float(i % 2) * 3.0
+		var col: Color = [GameTheme.PUMPKIN, GameTheme.EMBER, GameTheme.GOLD][i % 3]
+		col = col.lerp(Color("#5a2a14"), nf * 0.35)
+		if nf > 0.35:
+			_draw_pixel_circle(c + Vector2(0.0, -2.0), rad * 2.0, glow, 5.0)
+		_draw_pixel_circle(c, rad, col, 3.0)
+		_pixel_rect(Rect2(c.x - rad * 0.2, c.y - rad * 1.05, 3.0, 4.0), straw_dark)
+		# jack-o'-lantern face after dark
+		if nf > 0.4:
+			_pixel_rect(Rect2(c.x - rad * 0.5, c.y - 2.0, 3.0, 3.0), GameTheme.GOLD)
+			_pixel_rect(Rect2(c.x + rad * 0.3, c.y - 2.0, 3.0, 3.0), GameTheme.GOLD)
+			_pixel_rect(Rect2(c.x - 3.0, c.y + 3.0, 6.0, 2.0), GameTheme.GOLD)
+	# straw bales
+	for i in range(2):
+		var bx := bank_w * 0.42 + float(i) * 58.0
+		var by := bank_top + 30.0
+		_pixel_rect(Rect2(bx, by, 34.0, 18.0), straw)
+		_pixel_rect(Rect2(bx, by, 34.0, 3.0), straw.lightened(0.18))
+		for j in range(3):
+			_pixel_rect(Rect2(bx + 4.0 + float(j) * 10.0, by + 4.0, 2.0, 12.0), straw_dark)
+	# corn-stalk bundles
+	for i in range(3):
+		var cx := bank_w * 0.18 + float(i) * 22.0
+		var top := bank_top - 26.0 + float(i % 2) * 6.0
+		_pixel_rect(Rect2(cx, top, 3.0, bank_top + 34.0 - top), straw_dark)
+		_pixel_rect(Rect2(cx + 5.0, top + 4.0, 3.0, bank_top + 30.0 - top), straw_dark)
+		_pixel_rect(Rect2(cx - 6.0, top + 14.0, 12.0, 3.0), GameTheme.LEAF.lerp(Color("#4a3a1a"), nf * 0.3))
+		_pixel_rect(Rect2(cx - 2.0, top + 4.0, 6.0, 8.0), GameTheme.GOLD.lerp(Color("#5a3a12"), nf * 0.3))
+	# a lit lantern post on the Deep Sea quay
+	if region == "ocean" or region == "open":
+		var lx := bank_w - 26.0
+		var ly := bank_top - 6.0
+		_pixel_rect(Rect2(lx, ly - 46.0, 4.0, 46.0), GameTheme.WOOD_DARK)
+		_pixel_rect(Rect2(lx - 3.0, ly - 56.0, 10.0, 12.0), GameTheme.HUSK)
+		if nf > 0.2:
+			_draw_pixel_circle(Vector2(lx + 2.0, ly - 50.0), 22.0, Color(1.0, 0.72, 0.30, 0.10 + nf * 0.12), 5.0)
+		_pixel_rect(Rect2(lx - 1.0, ly - 54.0, 6.0, 8.0), GameTheme.GOLD)
+	# leaves drifting on the water (frozen entirely under reduce motion)
+	if GameState.reduce_motion():
+		return
+	for i in range(8):
+		var lx := fposmod(float(i) * 131.0 + t * (7.0 + float(i) * 1.5), view_size.x)
+		var ly := water_line + 14.0 + fposmod(float(i) * 47.0 + t * 3.0,
+				maxf(1.0, view_size.y - water_line - 24.0))
+		var lc: Color = [GameTheme.PUMPKIN, GameTheme.GOLD, GameTheme.EMBER, GameTheme.CRANBERRY][i % 4]
+		lc.a = 0.85
+		_pixel_rect(Rect2(lx, ly, 6.0, 3.0), lc)
+		_pixel_rect(Rect2(lx + 2.0, ly - 2.0, 3.0, 2.0), lc.lightened(0.15))
 
 
 func _draw_dotted_line(from: Vector2, to: Vector2, c: Color, segs := 18, sag := 16.0) -> void:
@@ -3990,17 +4274,17 @@ func _draw_reel_meter() -> void:
 	var h := 48.0
 	var x := (view_size.x - w) * 0.5
 	var y := view_size.y - 96.0
-	_ui_panel(Rect2(x, y, w, h), Color("#141c2c", 0.85), Color("#3b4a63", 0.95))
+	_ui_panel(Rect2(x, y, w, h), Color(GameTheme.PANEL.darkened(0.15), 0.85), Color(GameTheme.PANEL_LIGHT, 0.95))
 	var bar_x := x + 16.0
 	var bar_w := w - 32.0
 	var bar_y := y + 22.0
-	_pixel_rect(Rect2(bar_x, bar_y, bar_w, 12.0), Color("#22314a"))
+	_pixel_rect(Rect2(bar_x, bar_y, bar_w, 12.0), GameTheme.PANEL.darkened(0.18))
 	if _is_tug_fight():
 		var band := _tug_band()
 		_pixel_rect(Rect2(bar_x + bar_w * (tug_center - band), bar_y, bar_w * band * 2.0, 12.0), GameTheme.LEAF)
 		_pixel_rect(Rect2(bar_x + bar_w * reel_tension - 2.0, bar_y - 5.0, 4.0, 22.0), GameTheme.CREAM)
 		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), "HOLD TO REEL - FOLLOW THE GREEN",
-				Color("#cfe0ec"), Color("#050a12", 0.6), 2, 1, 1)
+				GameTheme.CREAM, Color("#050a12", 0.6), 2, 1, 1)
 	else:
 		var good := _green_half()
 		_pixel_rect(Rect2(bar_x + bar_w * (timing_center - good), bar_y, bar_w * good * 2.0, 12.0),
@@ -4009,11 +4293,14 @@ func _draw_reel_meter() -> void:
 		_pixel_rect(Rect2(bar_x + bar_w * reel_pos - 2.0, bar_y - 5.0, 4.0, 22.0), GameTheme.CREAM)
 		var hint := "HIT THE GREEN - SET ONCE PER FISH"
 		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), hint,
-				Color("#cfe0ec"), Color("#050a12", 0.6), 2, 1, 1)
+				GameTheme.CREAM, Color("#050a12", 0.6), 2, 1, 1)
 
 
 func _draw_hud() -> void:
-	_hud_panel("COINS %d" % GameState.coins, true)
+	var coins_r := _hud_panel("COINS %d" % GameState.coins, true)
+	var harvest_on := GameState.harvest_season_open()
+	if harvest_on:
+		_draw_harvest_chip(coins_r)
 	var area_label := "OPEN WATER" if open_water else RegionArt.display(region)
 	var rt := "%s  %s  %s" % [area_label.to_upper(),
 			"NIGHT" if is_night else "DAY", _weather_label()]
@@ -4021,10 +4308,10 @@ func _draw_hud() -> void:
 	RegionArt.draw_glyph(self, String(art.get("glyph", "pond")),
 			Vector2(16.0, 68.0), 15.0, GameTheme.CREAM)
 	PixFont.draw_text_shadowed(self, Vector2(30.0, 54.0), rt,
-			Color("#e9d8a8"), Color("#050a12", 0.6), 2, 1, 1)
+			GameTheme.WHEAT, Color("#050a12", 0.6), 2, 1, 1)
 	var forecast := "NEXT %s IN %ds" % [_weather_name(weather_next), maxi(0, int(ceil(weather_timer)))]
 	PixFont.draw_text_shadowed(self, Vector2(12.0, 82.0), forecast,
-			Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
+			GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
 	var daily_id := GameState.daily_fish_id()
 	if daily_id != "":
 		var daily_txt := "DAILY: %s x2" % fish_name(daily_id).to_upper()
@@ -4037,25 +4324,26 @@ func _draw_hud() -> void:
 		if is_island:
 			PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 120.0),
 					"G AXE - E OR CLICK CHOP - WALK WEST TO SAIL HOME",
-					Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
+					GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
 		else:
 			PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 120.0),
 					"SPOTS 1-4 - R ROD - B BOAT - I INDEX - ESC PAUSE",
-					Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
+					GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
+	var right_y := 112.0 if harvest_on else 52.0
 	var boat_txt := "BOAT: %s" % String(GameState.current_boat().get("name", "Old Raft")).to_upper()
 	PixFont.draw_text_shadowed(self,
-			Vector2(view_size.x - PixFont.text_width(boat_txt, 2) - 12.0, 52.0),
-			boat_txt, Color("#e9d8a8"), Color("#050a12", 0.6), 2, 1, 1)
+			Vector2(view_size.x - PixFont.text_width(boat_txt, 2) - 12.0, right_y),
+			boat_txt, GameTheme.WHEAT, Color("#050a12", 0.6), 2, 1, 1)
 	var bait_txt := _bait_hud_text()
-	var bait_c := Color("#8fd9a8") if String(GameState.gear.get("bait", "")) != "" else Color("#e0906e")
+	var bait_c := GameTheme.LEAF if String(GameState.gear.get("bait", "")) != "" else GameTheme.PUMPKIN
 	PixFont.draw_text_shadowed(self,
-			Vector2(view_size.x - PixFont.text_width(bait_txt, 2) - 12.0, 72.0),
+			Vector2(view_size.x - PixFont.text_width(bait_txt, 2) - 12.0, right_y + 20.0),
 			bait_txt, bait_c, Color("#050a12", 0.6), 2, 1, 1)
 	var streak := int(GameState.stats.get("current_streak", 0))
 	if streak > 0:
 		var streak_txt := "STREAK x%d  +%d%%" % [streak, int((GameState.streak_sale_mult() - 1.0) * 100.0)]
 		PixFont.draw_text_shadowed(self,
-				Vector2(view_size.x - PixFont.text_width(streak_txt, 2) - 12.0, 92.0),
+				Vector2(view_size.x - PixFont.text_width(streak_txt, 2) - 12.0, right_y + 40.0),
 				streak_txt, GameTheme.LEAF, Color("#050a12", 0.6), 2, 1, 1)
 
 	_draw_event_banner(12.0)
@@ -4071,7 +4359,7 @@ func _draw_hud() -> void:
 		var tw := PixFont.text_width(txt, ps)
 		var mx := (view_size.x - tw) * 0.5
 		var my := view_size.y - 150.0
-		_ui_panel(Rect2(mx - 14.0, my - 8.0, tw + 28.0, 30.0), Color("#141c2c", 0.72), Color("#3b4a63", 0.8))
+		_ui_panel(Rect2(mx - 14.0, my - 8.0, tw + 28.0, 30.0), Color(GameTheme.PANEL.darkened(0.15), 0.72), Color(GameTheme.PANEL_LIGHT, 0.8))
 		PixFont.draw_text_shadowed(self, Vector2(mx, my), txt, GameTheme.CREAM,
 				Color("#050a12", 0.65), ps, 1, 1)
 
@@ -4101,17 +4389,35 @@ func _draw_hud() -> void:
 				hint = "TAP ROD TO READY IT - TAP BOAT TO BOARD"
 		var hw := PixFont.text_width(hint, 2)
 		PixFont.draw_text_shadowed(self, Vector2((view_size.x - hw) * 0.5, view_size.y - 26.0), hint,
-				Color("#c8d6e2"), Color("#050a12", 0.6), 2, 1, 1)
+				GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
+
+
+## Pumpkin pill under the coins panel: tokens + time left, warning-toned
+## in the final three days. It replaces the 2X coin chip during the feast.
+func _draw_harvest_chip(coins_r: Rect2) -> void:
+	var txt := "%d TOKENS - %s" % [GameState.harvest_tokens(), GameState.harvest_time_text()]
+	var w := PixFont.text_width(txt, 2) + 46.0
+	var r := Rect2(view_size.x - w - 12.0, coins_r.position.y + coins_r.size.y + 4.0, w, 26.0)
+	var fill := GameTheme.EMBER if GameState.harvest_final_days() else GameTheme.PUMPKIN
+	_ui_panel(r, fill, GameTheme.WOOD_DARK, 2.0)
+	var leaf_c := Vector2(r.position.x + 15.0, r.position.y + 13.0)
+	draw_colored_polygon(PackedVector2Array([leaf_c + Vector2(-8.0, 1.0),
+		leaf_c + Vector2(-2.0, -7.0), leaf_c + Vector2(8.0, -3.0),
+		leaf_c + Vector2(1.0, 7.0)]), GameTheme.LEAF)
+	draw_line(leaf_c + Vector2(-5.0, 4.0), leaf_c + Vector2(5.0, -4.0),
+		GameTheme.WOOD_DARK, 1.5)
+	PixFont.draw_text_shadowed(self, Vector2(r.position.x + 28.0, r.position.y + 5.0), txt,
+			GameTheme.CREAM, Color(GameTheme.INK, 0.7), 2, 1, 1)
 
 
 ## Gold strip with the 2x coin countdown, used by the HUD and start menu.
 func _draw_event_banner(y: float) -> void:
-	if not GameState.event_active():
+	if not GameState.event_active() or GameState.harvest_season_open():
 		return
 	var txt := "2X COINS - %s LEFT" % GameState.event_time_text()
 	var w := PixFont.text_width(txt, 2) + 24.0
 	var x := (view_size.x - w) * 0.5
-	_ui_panel(Rect2(x, y, w, 26.0), Color("#141c2c", 0.86), GameTheme.GOLD, 3.0)
+	_ui_panel(Rect2(x, y, w, 26.0), Color(GameTheme.PANEL.darkened(0.15), 0.86), GameTheme.GOLD, 3.0)
 	PixFont.draw_text_centered(self, view_size.x * 0.5, y + 5.0, txt, GameTheme.GOLD, 2, 1)
 
 
@@ -4217,7 +4523,7 @@ func _draw_wrapped_centered(center_x: float, y: float, text: String, color: Colo
 
 
 func _draw_menu() -> void:
-	draw_rect(Rect2(0.0, 0.0, view_size.x, view_size.y), Color("#0b1320", 0.62))
+	draw_rect(Rect2(0.0, 0.0, view_size.x, view_size.y), Color(GameTheme.DIM, 0.62))
 	var sc := _menu_scale()
 	var vw := view_size.x / sc
 	var vh := view_size.y / sc
@@ -4227,7 +4533,11 @@ func _draw_menu() -> void:
 	var py := (vh - ph) * 0.5
 	_draw_event_banner(maxf(10.0, py * sc - 36.0))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2(sc, sc))
-	_ui_panel(Rect2(px, py, pw, ph), Color("#1d2536", 0.96), GameTheme.CREAM)
+	draw_style_box(UILib.sfx_bg(), Rect2(px, py, pw, ph))
+	if SeasonTheme.is_harvest():
+		_pixel_rect(Rect2(px + 14.0, py + 3.0, pw - 28.0, 1.0), GameTheme.WHEAT)
+	_draw_ribbon_bg(Rect2(px + 34.0, py + 16.0, pw - 68.0, 102.0),
+			GameTheme.PANEL_LIGHT, GameTheme.WOOD_DARK)
 
 	var t1 := "COTTAGE CREEK"
 	var t2 := "FISHING"
@@ -4236,7 +4546,7 @@ func _draw_menu() -> void:
 	var sub := "CAST - HOOK - REEL - COLLECT"
 	var sw := PixFont.text_width(sub, 2)
 	PixFont.draw_text_shadowed(self, Vector2(px + (pw - sw) * 0.5, py + 126.0), sub,
-			Color("#aebfd0"), Color("#050a12", 0.6), 2, 1, 1)
+			GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
 
 	menu_buttons = _menu_button_rects()
 	for i in range(menu_buttons.size()):
@@ -4246,11 +4556,11 @@ func _draw_menu() -> void:
 		var r := Rect2((b["rect"] as Rect2).position / sc, (b["rect"] as Rect2).size / sc)
 		var hovered: bool = i == hover_button
 		var is_new: bool = String(b["id"]) == "updates" and ChangelogLib.is_unseen()
-		var fill := Color("#3c4a63") if hovered else Color("#2b3648")
+		var fill := GameTheme.BUTTON_HOVER if hovered else GameTheme.PANEL_LIGHT
 		if is_new and not hovered:
-			fill = Color("#4a3d24")
-		var border := GameTheme.CREAM if hovered else (GameTheme.GOLD if is_new else Color("#4b5a70"))
-		_ui_panel(r, fill, border, 3.0)
+			fill = GameTheme.HUSK
+		var border := GameTheme.GOLD if (hovered or is_new) else GameTheme.BUTTON_BORDER
+		_ui_panel(r, fill, border, 2.0 if (hovered or is_new) else 3.0)
 		var label := String(b["label"])
 		var lw := PixFont.text_width(label, 3)
 		PixFont.draw_text_shadowed(self, Vector2(r.position.x + (r.size.x - lw) * 0.5,
@@ -4260,7 +4570,7 @@ func _draw_menu() -> void:
 	var foot := "SPACE / CLICK TO START - 1-4 SPOTS"
 	var fw := PixFont.text_width(foot, 2)
 	PixFont.draw_text_shadowed(self, Vector2(px + (pw - fw) * 0.5, py + ph - 34.0), foot,
-			Color("#e9d8a8"), Color("#050a12", 0.6), 2, 1, 1)
+			GameTheme.WHEAT, Color("#050a12", 0.6), 2, 1, 1)
 
 	# the HUD message strip only draws in-game, so the cheat confirmation
 	# gets its own line under the start-screen panel
@@ -4271,8 +4581,24 @@ func _draw_menu() -> void:
 	draw_set_transform(Vector2.ZERO)
 
 
+## Trophy reveal shown when the album completes outside the feast board.
+func _draw_harvest_award() -> void:
+	var fade := clampf(harvest_award_t / 1.2, 0.0, 1.0)
+	draw_rect(Rect2(0.0, 0.0, view_size.x, view_size.y), Color(GameTheme.DIM, 0.45 * fade))
+	var pw := 440.0
+	var ph := 340.0
+	var px := (view_size.x - pw) * 0.5
+	var py := (view_size.y - ph) * 0.5
+	draw_style_box(UILib.sfx_paper(), Rect2(px, py, pw, ph))
+	PixFont.draw_text_centered(self, px + pw * 0.5, py + 18.0,
+			"20 / 20 - ALBUM COMPLETE", GameTheme.INK, 3, 1)
+	HarvestCards.draw_trophy(self, Rect2(px + 40.0, py + 48.0, pw - 80.0, 220.0))
+	PixFont.draw_text_centered(self, px + pw * 0.5, py + ph - 44.0,
+			"THE HARVEST QUEEN JOINS YOUR FLEET", GameTheme.WOOD_DARK, 2, 1)
+
+
 func _draw_catch_popup() -> void:
-	draw_rect(Rect2(0.0, 0.0, view_size.x, view_size.y), Color("#0b1320", 0.55))
+	draw_rect(Rect2(0.0, 0.0, view_size.x, view_size.y), Color(GameTheme.DIM, 0.55))
 	var pw := 440.0
 	var ph := 330.0
 	var px := (view_size.x - pw) * 0.5
@@ -4282,7 +4608,7 @@ func _draw_catch_popup() -> void:
 	var sc := 1.0 + 2.70158 * pow(tc - 1.0, 3.0) + 1.70158 * pow(tc - 1.0, 2.0)
 	var center := Vector2(px + pw * 0.5, py + ph * 0.5)
 	draw_set_transform(center - center * sc, 0.0, Vector2(sc, sc))
-	_ui_panel(Rect2(px, py, pw, ph), GameTheme.PAPER, GameTheme.INK, 5.0)
+	draw_style_box(UILib.sfx_paper(), Rect2(px, py, pw, ph))
 
 	var name_val := fish_name(catch_fish_id).to_upper()
 	var nps := 4
@@ -4295,7 +4621,13 @@ func _draw_catch_popup() -> void:
 	var rx := px + (pw - (rw + 20.0)) * 0.5
 	_ui_panel(Rect2(rx, py + 66.0, rw + 20.0, 26.0), rarity_color, GameTheme.INK, 3.0)
 	PixFont.draw_text_centered(self, px + pw * 0.5, py + 72.0, catch_rarity.to_upper(),
-			Color("#18202c"), 3, 1)
+			UILib.INK, 3, 1)
+	if String(FishDB.fish_data(catch_fish_id).get("season", "")) == "harvest":
+		var hw := PixFont.text_width("HARVEST", 2) + 20.0
+		_ui_panel(Rect2(px + pw - hw - 14.0, py + 66.0, hw, 26.0), GameTheme.PUMPKIN,
+				GameTheme.WOOD_DARK, 2.0)
+		PixFont.draw_text_centered(self, px + pw - hw * 0.5 - 14.0, py + 72.0, "HARVEST",
+				GameTheme.CREAM, 2, 1)
 
 	if catch_new:
 		PixFont.draw_text_centered(self, px + pw * 0.5, py + 96.0, "NEW SPECIES!",
@@ -4303,6 +4635,7 @@ func _draw_catch_popup() -> void:
 	FishArt.draw_fish(self, Rect2(px + 90.0, py + 110.0, pw - 180.0, 84.0),
 			FishDB.fish_data(catch_fish_id), false, 1.0)
 
+	var f := FishDB.fish_data(catch_fish_id)
 	var tags: Array[String] = []
 	if catch_perfect:
 		tags.append("PERFECT +15%")
@@ -4323,7 +4656,6 @@ func _draw_catch_popup() -> void:
 	var w_txt := "%.2f KG   WORTH %d COINS" % [catch_weight, catch_coins]
 	PixFont.draw_text_centered(self, px + pw * 0.5, py + 216.0, w_txt, GameTheme.WOOD_DARK, 2, 1)
 
-	var f := FishDB.fish_data(catch_fish_id)
 	var d_txt := String(f.get("desc", ""))
 	_draw_wrapped_centered(px + pw * 0.5, py + 238.0, d_txt, Color("#5a4a55"), 2, pw - 40.0, 2)
 

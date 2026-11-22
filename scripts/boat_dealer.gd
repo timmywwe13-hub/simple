@@ -25,8 +25,12 @@ func interact() -> void:
 		panel_scroll.scroll_vertical = scroll_pos
 		panel_scroll.set_deferred("scroll_vertical", scroll_pos)
 	s["coins"].text = "COINS %d" % GameState.coins
-	var intro := UILib.label(body, "BUY A BOAT - BETTER BOATS FETCH MORE AT THE FISH MARKET", 14, Color("#a8c0cc"))
+	var intro := UILib.label(body, "BUY A BOAT - BETTER BOATS FETCH MORE AT THE FISH MARKET", 14, GameTheme.SUBTEXT)
 	intro.custom_minimum_size = Vector2(0.0, 24.0)
+	if GameState.harvest_season_open() and not bool(GameState.harvest.get("boat_claimed", false)):
+		var hintro := UILib.label(body, "THE HARVEST QUEEN IS NOT FOR SALE - FINISH THE 20-CARD ALBUM TO WIN HER",
+				13, GameTheme.GOLD)
+		hintro.custom_minimum_size = Vector2(0.0, 22.0)
 	var cur := GameState.current_boat()
 	var cur_l := UILib.label(body, "CURRENT: %s" % String(cur.get("name", "Old Raft")).to_upper(), 16, UILib.GOLD, true)
 	cur_l.custom_minimum_size = Vector2(0.0, 26.0)
@@ -38,11 +42,19 @@ func interact() -> void:
 		var row := TownUI.row(body, 50.0)
 		var name_l := UILib.label(row, String(d.get("name", id)), 16, UILib.CREAM, true)
 		name_l.position = Vector2(12.0, 5.0)
-		var desc_l := UILib.label(row, String(d.get("desc", "")), 12, Color("#a8c0cc"))
+		var desc_l := UILib.label(row, String(d.get("desc", "")), 12, GameTheme.SUBTEXT)
 		desc_l.position = Vector2(12.0, 26.0)
 		var stat_l := UILib.label(row, "SPEED %.0f  VALUE +%.0f%%" % [float(d.get("speed", 90.0)),
 				(float(d.get("value_mult", 1.0)) - 1.0) * 100.0], 12, GameTheme.LEAF)
 		stat_l.position = Vector2(300.0, 10.0)
+		if bool(d.get("award_only", false)) and not owned:
+			var plaque := UILib.pill(row, "20/20 REWARD", GameTheme.PUMPKIN, 11, UILib.CREAM)
+			plaque.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+			plaque.offset_left = -132.0
+			plaque.offset_right = -12.0
+			plaque.offset_top = -14.0
+			plaque.offset_bottom = 14.0
+			continue
 		var text := "EQUIPPED" if equipped else ("EQUIP" if owned else "BUY %d" % int(d.get("cost", 0)))
 		TownUI.row_button(row, text, _on_buy.bind(String(id)))
 	town.open_panel(s["root"])

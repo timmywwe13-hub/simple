@@ -29,7 +29,7 @@ func interact() -> void:
 		panel_scroll.scroll_vertical = scroll_pos
 		panel_scroll.set_deferred("scroll_vertical", scroll_pos)
 	s["coins"].text = "COINS %d" % GameState.coins
-	var intro := UILib.label(body, "SELL YOUR CATCH - MARKET +15%%, BOAT BONUS, DAILY DEMAND AND STREAK BONUSES INCLUDED", 14, Color("#a8c0cc"))
+	var intro := UILib.label(body, "SELL YOUR CATCH - MARKET +15%%, BOAT BONUS, DAILY DEMAND AND STREAK BONUSES INCLUDED", 14, GameTheme.SUBTEXT)
 	intro.custom_minimum_size = Vector2(0.0, 24.0)
 	if GameState.event_active():
 		var event_l := UILib.label(body, "2X COIN EVENT: EVERY FISH SELLS FOR DOUBLE FOR %s" % GameState.event_time_text(),
@@ -44,6 +44,7 @@ func interact() -> void:
 	list.custom_minimum_size = Vector2(600.0, 210.0)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_child(list)
+	UILib.style_item_list(list)
 	_refresh_list()
 	var btns := TownUI.row(body, 50.0)
 	var sell_one_btn := UILib.button(btns, "SELL SELECTED", _on_sell_selected, 15, GameTheme.WOOD,
