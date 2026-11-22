@@ -24,3 +24,7 @@ build/web/CNAME
 
 # Surge deploy metadata
 build/web/.surge/
+
+# Python bytecode from the web-build cache patch
+__pycache__/
+*.pyc
