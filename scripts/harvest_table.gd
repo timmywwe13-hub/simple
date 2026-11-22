@@ -11,7 +11,7 @@ extends Interactable
 
 
 func art_height() -> float:
-	return 96.0
+	return 140.0
 
 
 func prompt_label() -> String:
@@ -50,41 +50,161 @@ func _draw_pixel_circle(center: Vector2, radius: float, color: Color, pixel := 4
 
 func _draw() -> void:
 	var stage := GameState.harvest_table_stage()
+	var bob := sin(Time.get_ticks_msec() / 1000.0 * 1.7) * 0.8
+	var top_y := -38.0 + bob * 0.4
+	_draw_stall(bob)
+	_draw_table(top_y, stage)
+	_draw_food(top_y, stage)
+	_draw_produce()
+	draw_prompt()
+
+
+## A proper festival stall around the table: posts, a striped awning, a
+## mounted HARVEST sign and warm bulbs. The sign used to float on a thin
+## post, which read as scenery rather than a shop.
+func _draw_stall(bob: float) -> void:
+	var beam_y := -112.0 + bob
 	var wood := GameTheme.WOOD
 	var dark := GameTheme.WOOD_DARK
-	var bob := sin(Time.get_ticks_msec() / 1000.0 * 1.7) * 1.0
-	var top_y := -34.0 + bob
-	# trestle legs and plank top
-	_pixel_rect(Rect2(-58.0, top_y + 12.0, 7.0, 40.0), dark)
-	_pixel_rect(Rect2(51.0, top_y + 12.0, 7.0, 40.0), dark)
-	_pixel_rect(Rect2(-52.0, top_y + 26.0, 104.0, 4.0), dark)
-	_pixel_rect(Rect2(-62.0, top_y, 124.0, 12.0), wood)
-	_pixel_rect(Rect2(-62.0, top_y, 124.0, 3.0), wood.lightened(0.16))
-	if stage >= 1:
-		_pixel_rect(Rect2(-64.0, top_y - 1.0, 128.0, 5.0), GameTheme.WHEAT)
-	if stage >= 2:
+	# posts and feet
+	for px in [-68.0, 61.0]:
+		_pixel_rect(Rect2(px, beam_y + 4.0, 7.0, 110.0), dark)
+		_pixel_rect(Rect2(px + 2.0, beam_y + 4.0, 3.0, 106.0), wood)
+		_pixel_rect(Rect2(px - 3.0, -17.0, 13.0, 5.0), dark)
+	# ridge beam
+	_pixel_rect(Rect2(-74.0, beam_y, 148.0, 5.0), dark)
+	_pixel_rect(Rect2(-74.0, beam_y, 148.0, 2.0), GameTheme.WHEAT)
+	# cream/pumpkin awning stripes
+	var aw := beam_y + 5.0
+	for i in range(12):
+		var c: Color = GameTheme.CREAM if i % 2 == 0 else GameTheme.PUMPKIN
+		_pixel_rect(Rect2(-72.0 + float(i) * 12.0, aw, 12.0, 11.0), c)
+	_pixel_rect(Rect2(-72.0, aw + 11.0, 144.0, 2.0), GameTheme.EMBER.darkened(0.28))
+	for i in range(12):
+		var c: Color = GameTheme.CREAM if i % 2 == 0 else GameTheme.PUMPKIN
+		_pixel_rect(Rect2(-72.0 + float(i) * 12.0, aw + 13.0, 12.0, 6.0), c.darkened(0.03))
+		if i % 2 == 0:
+			_pixel_rect(Rect2(-72.0 + float(i) * 12.0 + 3.0, aw + 19.0, 6.0, 3.0),
+					c.darkened(0.10))
+	# mounted sign
+	_pixel_rect(Rect2(-56.0, beam_y - 24.0, 112.0, 22.0), GameTheme.PANEL_LIGHT)
+	_pixel_rect(Rect2(-56.0, beam_y - 24.0, 112.0, 3.0), GameTheme.WHEAT)
+	_pixel_rect(Rect2(-56.0, beam_y - 24.0, 3.0, 22.0), dark)
+	_pixel_rect(Rect2(53.0, beam_y - 24.0, 3.0, 22.0), dark)
+	_pixel_rect(Rect2(-56.0, beam_y - 4.0, 112.0, 2.0), dark)
+	_pixel_rect(Rect2(-40.0, beam_y - 3.0, 4.0, 6.0), dark)
+	_pixel_rect(Rect2(36.0, beam_y - 3.0, 4.0, 6.0), dark)
+	PixFont.draw_text_centered(self, 0.0, beam_y - 21.0, "HARVEST", GameTheme.WHEAT, 2, 1)
+	# warm bulbs under the awning
+	var wire := GameTheme.WHEAT.darkened(0.28)
+	var wy := aw + 25.0
+	draw_line(Vector2(-64.0, wy), Vector2(0.0, wy + 7.0), wire, 1.0)
+	draw_line(Vector2(0.0, wy + 7.0), Vector2(57.0, wy), wire, 1.0)
+	for i in range(9):
+		var f := float(i) / 8.0
+		var bx := lerpf(-64.0, 57.0, f)
+		var by := wy + sin(f * PI) * 7.0
+		var bulb: Color = GameTheme.GOLD if i % 2 == 0 else GameTheme.PUMPKIN
+		_pixel_rect(Rect2(bx - 2.0, by + 2.0, 4.0, 5.0), bulb)
+		if i % 2 == 0:
+			_draw_pixel_circle(Vector2(bx, by + 4.0), 8.0,
+					Color(bulb.r, bulb.g, bulb.b, 0.10), 4.0)
+	# corn stalks lashed to the posts
+	for side in [-1, 1]:
+		var cx := -61.0 if side < 0 else 66.0
+		_pixel_rect(Rect2(cx, beam_y + 38.0, 2.0, 58.0), GameTheme.LEAF.darkened(0.30))
 		for i in range(3):
-			_draw_pixel_circle(Vector2(-32.0 + float(i) * 32.0, top_y - 4.0), 6.0, GameTheme.PAPER, 2.0)
+			_pixel_rect(Rect2(cx - 1.0, beam_y + 46.0 + float(i) * 17.0, 9.0, 3.0),
+					GameTheme.LEAF)
+			_pixel_rect(Rect2(cx + 3.0, beam_y + 48.0 + float(i) * 17.0, 3.0, 6.0),
+					GameTheme.GOLD)
+
+
+## The trestle table itself: legs, plank top, and a cloth that grows in with
+## the table stage so a finished table reads as a feast rather than a bench.
+func _draw_table(top_y: float, stage: int) -> void:
+	var wood := GameTheme.WOOD
+	var dark := GameTheme.WOOD_DARK
+	for tx in [-56.0, 49.0]:
+		_pixel_rect(Rect2(tx, top_y + 12.0, 7.0, 30.0), dark)
+		_pixel_rect(Rect2(tx + 2.0, top_y + 12.0, 3.0, 28.0), wood)
+	_pixel_rect(Rect2(-56.0, top_y + 29.0, 112.0, 4.0), dark)
+	_pixel_rect(Rect2(-66.0, top_y, 132.0, 12.0), wood)
+	_pixel_rect(Rect2(-66.0, top_y, 132.0, 3.0), wood.lightened(0.16))
+	for i in range(2):
+		_pixel_rect(Rect2(-66.0, top_y + 5.0 + float(i) * 3.0, 132.0, 1.0), dark)
+	if stage >= 1:
+		_pixel_rect(Rect2(-64.0, top_y - 2.0, 128.0, 10.0), GameTheme.CREAM)
+		_pixel_rect(Rect2(-64.0, top_y + 8.0, 128.0, 18.0), GameTheme.CREAM.darkened(0.04))
+		_pixel_rect(Rect2(-64.0, top_y + 8.0, 128.0, 2.0), GameTheme.WHEAT.darkened(0.18))
+		for i in range(8):
+			_pixel_rect(Rect2(-64.0 + float(i) * 16.0 + 2.0, top_y + 26.0, 12.0, 4.0),
+					GameTheme.CREAM.darkened(0.04))
+		_pixel_rect(Rect2(-46.0, top_y - 3.0, 92.0, 5.0), GameTheme.WHEAT)
+		_pixel_rect(Rect2(-46.0, top_y - 3.0, 92.0, 2.0), GameTheme.WHEAT.lightened(0.16))
+
+
+func _draw_food(top_y: float, stage: int) -> void:
+	var surface := top_y - 5.0
+	if stage >= 1:
+		_draw_plate(-38.0, surface, GameTheme.PUMPKIN)
+		_draw_plate(14.0, surface, GameTheme.LEAF)
+	if stage >= 2:
+		_draw_plate(44.0, surface, GameTheme.CRANBERRY)
+		_draw_pie(-56.0, surface)
 	if stage >= 3:
-		_draw_pixel_circle(Vector2(0.0, top_y - 10.0), 9.0, GameTheme.GOLD, 3.0)
-		_pixel_rect(Rect2(-2.0, top_y - 22.0, 4.0, 10.0), GameTheme.CREAM)
-		_pixel_rect(Rect2(-5.0, top_y - 26.0, 10.0, 4.0), GameTheme.EMBER)
+		# centerpiece bowl and two candles
+		_draw_pixel_circle(Vector2(0.0, surface - 3.0), 11.0, GameTheme.GOLD.darkened(0.08), 3.0)
+		_draw_pixel_circle(Vector2(0.0, surface - 3.0), 8.0, GameTheme.HUSK, 3.0)
+		for i in range(4):
+			_draw_pixel_circle(Vector2(-5.0 + float(i) * 3.5, surface - 5.0), 3.0,
+					[GameTheme.PUMPKIN, GameTheme.GOLD, GameTheme.CRANBERRY, GameTheme.LEAF][i], 2.0)
+		_draw_candle(-27.0, surface, 15.0)
+		_draw_candle(27.0, surface, 15.0)
 	if stage >= 4:
-		_draw_pixel_circle(Vector2(-44.0, top_y - 10.0), 7.0, GameTheme.PUMPKIN, 2.0)
-		_draw_pixel_circle(Vector2(44.0, top_y - 10.0), 7.0, GameTheme.PUMPKIN, 2.0)
-		_pixel_rect(Rect2(-42.0, top_y - 30.0, 2.0, 20.0), GameTheme.GOLD)
-		_pixel_rect(Rect2(40.0, top_y - 30.0, 2.0, 20.0), GameTheme.GOLD)
-	# bunting over the table
-	for i in range(5):
-		var fx := -56.0 + float(i) * 28.0
-		var fc: Color = [GameTheme.PUMPKIN, GameTheme.GOLD, GameTheme.CRANBERRY, GameTheme.LEAF][i % 4]
-		_pixel_rect(Rect2(fx, top_y - 46.0 + absf(float(i) - 2.0) * 2.0, 12.0, 8.0), fc)
-	# signpost
-	_pixel_rect(Rect2(-2.0, top_y - 84.0, 4.0, 40.0), dark)
-	_pixel_rect(Rect2(-50.0, top_y - 90.0, 100.0, 18.0), GameTheme.PANEL_LIGHT)
-	_pixel_rect(Rect2(-50.0, top_y - 90.0, 100.0, 3.0), GameTheme.WHEAT)
-	PixFont.draw_text_centered(self, 0.0, top_y - 87.0, "HARVEST", GameTheme.WHEAT, 2, 1)
-	draw_prompt()
+		_draw_pixel_circle(Vector2(-58.0, surface - 2.0), 7.0, GameTheme.PUMPKIN, 2.0)
+		_pixel_rect(Rect2(-60.0, surface - 10.0, 3.0, 4.0), GameTheme.LEAF.darkened(0.25))
+		_draw_pixel_circle(Vector2(58.0, surface - 2.0), 7.0, GameTheme.EMBER, 2.0)
+		_pixel_rect(Rect2(56.0, surface - 10.0, 3.0, 4.0), GameTheme.LEAF.darkened(0.25))
+		# leaf garland along the cloth
+		for i in range(9):
+			var lx := -60.0 + float(i) * 15.0
+			var lc: Color = [GameTheme.PUMPKIN, GameTheme.GOLD, GameTheme.EMBER, GameTheme.LEAF][i % 4]
+			_pixel_rect(Rect2(lx, top_y + 12.0 + sin(float(i) * 1.4) * 2.0, 6.0, 3.0), lc)
+
+
+func _draw_plate(x: float, y: float, food: Color) -> void:
+	_draw_pixel_circle(Vector2(x, y), 8.0, GameTheme.PAPER, 2.0)
+	_draw_pixel_circle(Vector2(x, y), 5.0, GameTheme.CREAM, 2.0)
+	_draw_pixel_circle(Vector2(x, y), 2.0, food, 2.0)
+
+
+func _draw_pie(x: float, y: float) -> void:
+	_draw_pixel_circle(Vector2(x, y), 9.0, GameTheme.WHEAT.darkened(0.12), 2.0)
+	_draw_pixel_circle(Vector2(x, y), 7.0, GameTheme.GOLD, 2.0)
+	for i in range(3):
+		_pixel_rect(Rect2(x - 5.0 + float(i) * 4.0, y - 5.0, 2.0, 10.0), GameTheme.HUSK)
+
+
+func _draw_candle(x: float, y: float, height: float) -> void:
+	_pixel_rect(Rect2(x - 2.0, y - height, 4.0, height), GameTheme.CREAM)
+	_pixel_rect(Rect2(x - 1.0, y - height - 3.0, 2.0, 3.0), GameTheme.GOLD)
+	_pixel_rect(Rect2(x, y - height - 4.0, 2.0, 2.0), GameTheme.EMBER)
+
+
+## Crates and pumpkins tucked under the table ends, inside the stall footprint
+## so the display stays clear of the Boat Dealer and Quest Giver on phones.
+func _draw_produce() -> void:
+	_pixel_rect(Rect2(-66.0, -13.0, 18.0, 13.0), GameTheme.WOOD)
+	_pixel_rect(Rect2(-66.0, -13.0, 18.0, 3.0), GameTheme.WOOD.lightened(0.14))
+	_pixel_rect(Rect2(-64.0, -10.0, 2.0, 10.0), GameTheme.WOOD_DARK)
+	_pixel_rect(Rect2(-56.0, -10.0, 2.0, 10.0), GameTheme.WOOD_DARK)
+	_draw_pixel_circle(Vector2(-63.0, -16.0), 5.0, GameTheme.PUMPKIN, 2.0)
+	_draw_pixel_circle(Vector2(-55.0, -15.0), 4.0, GameTheme.EMBER, 2.0)
+	_draw_pixel_circle(Vector2(59.0, -7.0), 7.0, GameTheme.PUMPKIN, 3.0)
+	_draw_pixel_circle(Vector2(68.0, -5.0), 5.0, GameTheme.EMBER, 2.0)
+	_pixel_rect(Rect2(57.0, -15.0, 3.0, 4.0), GameTheme.LEAF.darkened(0.2))
+	_pixel_rect(Rect2(66.0, -11.0, 3.0, 4.0), GameTheme.HUSK)
 
 
 ## ---------------------------------------------------------------------------
