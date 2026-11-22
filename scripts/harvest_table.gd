@@ -11,11 +11,13 @@ extends Interactable
 
 
 func art_height() -> float:
-	return 140.0
+	# The prompt is placed above this height. 140 put the bubble's tail on the
+	# mounted HARVEST sign, so give the stall a little more headroom.
+	return 160.0
 
 
 func prompt_label() -> String:
-	return "SOMETHING SMELLS GOOD"
+	return "HARVEST TABLE"
 
 
 func interact() -> void:

@@ -332,8 +332,9 @@ func grant_everything() -> void:
 	total_caught = maxi(total_caught, index.size())
 	# a handful of top-value fish in the bucket so selling can be tested
 	var pool := FishDB.all_ids()
-	# Force the Harvest Feast on and hand over a nearly-finished album so
-	# packs, the boat award and the seasonal screens can all be tested.
+	# Force the Harvest Feast on and hand over the completed album AND the
+	# Harvest Queen, so the event boat, trophy tab and seasonal screens can
+	# all be tested immediately instead of after twenty packs.
 	force_harvest = true
 	SeasonTheme.apply("harvest")
 	_season_open_cache = true
@@ -343,10 +344,17 @@ func grant_everything() -> void:
 	harvest["table_stage"] = 4
 	var hcards: Dictionary = {}
 	var hids: Array = HarvestCardsLib.ALL_IDS
-	for i in range(maxi(0, hids.size() - 2)):
+	for i in range(hids.size()):
 		hcards[String(hids[i])] = 1
 	harvest["cards"] = hcards
+	harvest["completed"] = true
+	harvest["boat_claimed"] = true
 	harvest["caught_harvest"] = 5
+	# Award the event-only hull exactly as the 20/20 album does.
+	if not owned_boats.has("boat_harvest"):
+		owned_boats.append("boat_harvest")
+	ShopDB.set_owned("boats", "boat_harvest", true)
+	gear["boat"] = "boat_harvest"
 	pool.sort_custom(func(a, b: String) -> bool:
 		return int(FishDB.fish_data(String(a)).get("coin", 0)) > int(FishDB.fish_data(b).get("coin", 0)))
 	for i in range(mini(6, pool.size())):

@@ -9,12 +9,14 @@ hook that activates a waiting worker on future builds.
 
 Run automatically by scripts/export-web.sh after the Godot export.
 """
+import hashlib
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SW = ROOT / "build" / "web" / "index.service.worker.js"
 HTML = ROOT / "build" / "web" / "index.html"
+PCK = ROOT / "build" / "web" / "index.pck"
 
 INSTALL_OLD = "self.addEventListener('install', (event) => {\n"
 INSTALL_NEW = (
@@ -84,13 +86,14 @@ def main() -> None:
             sw = sw.replace(INSTALL_OLD, INSTALL_NEW, 1)
             if ACTIVATE_OLD in sw:
                 sw = sw.replace(ACTIVATE_OLD, ACTIVATE_NEW, 1)
-        # The patched worker must not reuse the cache name of the unpatched
-        # build that may already be live, or it will not see any stale cache
-        # to remove (and could keep serving the old index.pck).
+        # Give every build its own cache name. A static suffix only forced one
+        # refresh; if the cache name stayed the same, clients kept serving the
+        # previous index.pck forever. The pck digest makes each export distinct.
+        pck_tag = hashlib.md5(PCK.read_bytes()).hexdigest()[:12] if PCK.exists() else "0"
         sw = re.sub(
             r"const CACHE_VERSION = '([^']*)';",
-            lambda m: m.group(0) if "|ccf" in m.group(1)
-            else "const CACHE_VERSION = '%s|ccf';" % m.group(1),
+            lambda m: "const CACHE_VERSION = '%s|ccf-%s';" % (
+                re.sub(r"\|ccf[^']*$", "", m.group(1)), pck_tag),
             sw,
             count=1,
         )

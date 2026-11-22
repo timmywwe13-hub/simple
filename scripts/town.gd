@@ -125,7 +125,7 @@ func _spawn_interactables() -> void:
 	_add("LuckyLily", CasinoScript.new(), 0.44, 0.0)
 	_add("BoatDealer", BoatDealer.new(), 0.60, 0.0)
 	_add("HarvestTable", HarvestTable.new(), 0.76, 0.0)
-	_add("QuestGiver", QuestGiver.new(), 0.87, 18.0)
+	_add("QuestGiver", QuestGiver.new(), 0.89, 18.0)
 
 
 ## Buildings shrink a little on narrow windows (640x360 phones) so five
@@ -438,7 +438,7 @@ func _draw_hud() -> void:
 	if GameState.harvest_season_open():
 		_hud_line("%d HARVEST TOKENS  %s" % [GameState.harvest_tokens(), GameState.harvest_time_text()],
 				12.0, row, GameTheme.GOLD)
-		row += 32.0
+		row += 40.0
 	_hud_line("BUCKET %d/%d" % [GameState.inventory_count(), GameState.bucket_capacity()], 12.0, row, UILib.CREAM)
 	var hint := "WASD / ARROWS - WALK    E - INTERACT    U - WHAT'S NEW    ESC - CLOSE"
 	if touch != null and touch.enabled:

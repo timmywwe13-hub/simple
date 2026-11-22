@@ -43,7 +43,12 @@ func art_height() -> float:
 
 ## Shared prompt bubble; subclasses call this at the end of _draw().
 func draw_prompt() -> void:
-	if not nearby:
+	if not nearby or town == null:
+		return
+	# Only the nearest walk-up draws a prompt. Before this, two shops close
+	# together (the Harvest table and the Quest Giver) could show overlapping
+	# bubbles when the player stood between them.
+	if town.get("current") != self:
 		return
 	var bounce := sin(Time.get_ticks_msec() / 1000.0 * 5.0) * 2.0
 	var sub := prompt_label()
