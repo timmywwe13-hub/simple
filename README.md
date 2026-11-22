@@ -29,7 +29,8 @@ godot --headless --path . --export-release Web build/web/index.html
 | Board / land boat | `B` |
 | Sail the boat (while aboard) | `A` / `D` (or left/right arrows) |
 | Reach Open Water | sail past the east edge of the water in the boat |
-| Return from Open Water | sail west past the edge |
+| Sail deeper | sail east again at the edge for the Kelp Shelf, then the Midnight Trench |
+| Return from Open Water | sail west at the edge, zone by zone, back to shore |
 | Visit Coconut Isle | sail east from the Deep Sea shore |
 | Leave Coconut Isle | walk west off the end of the beach |
 | Take out / put away the axe (island) | `G` |
@@ -113,6 +114,14 @@ res://scripts/touch_controls.gd # On-screen touch controls for phones/tablets
 res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 ```
 
+## Updates (v1.9.1)
+
+- **The Harvest Queen, upgraded** - the event hull is now the best boat in the creek: **speed 260**, **fish value +45%**, and **open-water rare/epic/legendary fish bite 35% more often**. She wears a striped festival canopy, twin lanterns, a pumpkin prow and a trail of golden leaves
+- **More open water** - the open sea is a three-zone voyage: **Open Water → Kelp Shelf → Midnight Trench**. Sail east at the edge to go deeper and west to return, with a distinct palette, landmarks and fishing pool in each zone
+- **Seven new open-water fish** - Kelp Bass, Garibaldi, Sheephead and Sunset Wrasse in the kelp; Gulper Eel, Vampire Squid and the legendary Abyssal Angler in the trench
+- **Admin boat** - `2222` now completes the album, awards and equips The Harvest Queen, and opens the trophy tab
+- **Town + HUD polish** - nearest-only interaction prompts, more Quest Giver spacing, clearer harvest-token HUD spacing, and a clean boat/bait readout while sailing
+
 ## Updates (v1.9)
 
 - **The Harvest Feast** - a seasonal event from **Nov 22 00:00 to Dec 1 23:59 local time**. The season gate is one explicit range check (it straddles the month change), `2222` forces it on for testing, and the whole palette applies at boot and reverts when the window closes
@@ -120,7 +129,7 @@ res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 - **World dressing** - per-region autumn palette overrides crossfade in on load, with drifting leaves, pumpkins, corn bundles, straw bales, a lit Deep Sea quay lantern, heavier cabin smoke and dusk about two in-game hours earlier
 - **The long table** - a sixth Town walk-up with four growth stages. Donate fish for tokens; completing the table hands out a bonus pack
 - **20-card album** - Fish, Feast, Places and Critters. Packs open immediately (never stranded at close), 3 cards each, no dupes inside a pack, guaranteed new card until complete, hard pity at six packs, duplicates pay 5 tokens as `SPARES`, and The Grand Tom card is also granted on the legendary catch
-- **The Harvest Queen** - awarded automatically at 20/20, exactly the Sea Trawler's stats (speed 215, value +20%), award-only, saved as a normal owned boat, with a gilded autumn renderer
+- **The Harvest Queen** - awarded automatically at 20/20, the best hull in the creek (speed 260, value +45%, open-water rare bites +35%), award-only, saved as a normal owned boat, with a gilded autumn renderer and festival canopy
 - **Five seasonal fish + three quests** - Pumpkinseed Sunny, Cranberry Darter, Maple Leaf Koi, Wattle Grouper and The Grand Tom (night, anywhere). A Full Plate, Potluck and The Grand Tom pay tokens. The Harvest Lantern is 40 tokens and draws rarer night fish
 - **Deadline clarity** - album header, countdown pill, HUD chip warning in the final three days, `CARDS CLOSE TONIGHT` on Dec 1, then a permanent read-only album with `RETURNS NOV 22` slots and `PACKS CLOSED UNTIL NOV 22`
 - **Web rebuild** - the v1.9 Web export replaces `build/web/`

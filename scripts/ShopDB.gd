@@ -115,11 +115,12 @@ static var BOATS := {
 		"speed": 170.0, "value_mult": 1.10, "desc": "Light and quick on open water.", "owned": false},
 	"boat_trawler": {"id": "boat_trawler", "name": "Sea Trawler", "cost": 2200,
 		"speed": 215.0, "value_mult": 1.20, "desc": "Deep-sea ready. Fish fetch 20% more.", "owned": false},
-	# Award-only grand prize: exactly the Trawler's stats, granted once at
-	# 20/20 cards. buy_boat() refuses award_only hulls.
+	# Award-only grand prize: the best hull in the creek. Faster than the
+	# Trawler, pays more at market, and open-water rare fish bite more often.
+	# buy_boat() refuses award_only hulls.
 	"boat_harvest": {"id": "boat_harvest", "name": "The Harvest Queen", "cost": 0,
-		"speed": 215.0, "value_mult": 1.20, "award_only": true,
-		"desc": "Gilded autumn hull. Awarded for completing the Harvest album.", "owned": false},
+		"speed": 260.0, "value_mult": 1.45, "open_rare_bonus": 1.35, "award_only": true,
+		"desc": "Queen of the fleet. Fastest hull, +45% value, and open-water rare fish bite 35% more.", "owned": false},
 }
 
 ## Rod tier from the hidden timing_window marker: 0 = Twig, 4 = Carbon.

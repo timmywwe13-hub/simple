@@ -12,7 +12,7 @@ extends RefCounted
 ## with the separate night_* ramp. RegionArt.mix() crossfades two entries
 ## colour by colour, which is what makes a spot change feel like travel.
 
-const KEYS := ["pond", "river", "lake", "ocean", "open", "island"]
+const KEYS := ["pond", "river", "lake", "ocean", "open", "open_kelp", "open_trench", "island"]
 
 const TABLE := {
 	"pond": {
@@ -190,6 +190,76 @@ const TABLE := {
 		"bank_soil": Color("#4a3a30"),
 		"bank_soil_light": Color("#5d493c"),
 	},
+	"open_kelp": {
+		"name": "KELP SHELF",
+		"tagline": "GOLDEN WEEDS AND SHALLOW REEFS",
+		"glyph": "open",
+		"waterline": 0.50,
+		"wave": "ripples",
+		"bank_style": "none",
+		"trees": "none",
+		"props": ["islands", "kelp", "sailboat", "gulls"],
+		"ambient": ["gull", "spray"],
+		"mist": false,
+		"spray": true,
+		"sky_top": Color("#7fb5b0"),
+		"sky_mid": Color("#b8d8c9"),
+		"sky_low": Color("#e6edd4"),
+		"night_top": Color("#14262b"),
+		"night_mid": Color("#244047"),
+		"night_low": Color("#4e665c"),
+		"sun": Color("#fff2cf"),
+		"cloud": Color("#f2f7e8"),
+		"w_shallow": Color("#3f8a79"),
+		"w_mid": Color("#266b62"),
+		"w_deep": Color("#123f3f"),
+		"w_surface": Color("#e6f4dc"),
+		"mtn_far": Color("#7c9a86"),
+		"mtn_mid": Color("#5b7f70"),
+		"mtn_near": Color("#3c6158"),
+		"tree": Color("#4f7a54"),
+		"tree_dark": Color("#355c40"),
+		"bank": Color("#7a9a58"),
+		"bank_dark": Color("#566f3e"),
+		"bank_light": Color("#a8bd72"),
+		"bank_soil": Color("#4e4430"),
+		"bank_soil_light": Color("#655a40"),
+	},
+	"open_trench": {
+		"name": "MIDNIGHT TRENCH",
+		"tagline": "COLD DARK WATER AND OLD WRECKS",
+		"glyph": "open",
+		"waterline": 0.45,
+		"wave": "swell",
+		"bank_style": "none",
+		"trees": "none",
+		"props": ["wreck", "mist", "gulls"],
+		"ambient": ["spray"],
+		"mist": true,
+		"spray": true,
+		"sky_top": Color("#52678f"),
+		"sky_mid": Color("#7e91ab"),
+		"sky_low": Color("#b8c3cf"),
+		"night_top": Color("#090e20"),
+		"night_mid": Color("#141b33"),
+		"night_low": Color("#29314e"),
+		"sun": Color("#e8eef8"),
+		"cloud": Color("#d8e2ee"),
+		"w_shallow": Color("#26496b"),
+		"w_mid": Color("#163453"),
+		"w_deep": Color("#07182e"),
+		"w_surface": Color("#b7cfe0"),
+		"mtn_far": Color("#586b86"),
+		"mtn_mid": Color("#40526c"),
+		"mtn_near": Color("#2a3a52"),
+		"tree": Color("#2f4b4a"),
+		"tree_dark": Color("#223634"),
+		"bank": Color("#4f6b66"),
+		"bank_dark": Color("#354a48"),
+		"bank_light": Color("#708a80"),
+		"bank_soil": Color("#3a3830"),
+		"bank_soil_light": Color("#4e4a3e"),
+	},
 	"island": {
 		"name": "COCONUT ISLE",
 		"tagline": "WARM LAGOON, PALMS AND A LITTLE JETTY",
@@ -239,7 +309,8 @@ static func get_art(key: String, season := "") -> Dictionary:
 ## and the water's shape stay exactly as they are.
 static func stylize(key: String) -> Dictionary:
 	var out: Dictionary = TABLE.get(key, TABLE["pond"]).duplicate(true)
-	var o: Dictionary = HARVEST_OVERRIDES.get(key, HARVEST_OVERRIDES["pond"])
+	var fallback := "open" if key.begins_with("open") else "pond"
+	var o: Dictionary = HARVEST_OVERRIDES.get(key, HARVEST_OVERRIDES[fallback])
 	for k in o.keys():
 		out[k] = Color(String(o[k]))
 	out["season"] = "harvest"
@@ -301,6 +372,28 @@ const HARVEST_OVERRIDES := {
 		"tree": "#9a5c2c", "tree_dark": "#6b3f20",
 		"bank": "#a2824e", "bank_dark": "#624824", "bank_light": "#c8a666",
 		"bank_soil": "#543c26", "bank_soil_light": "#6a5032",
+	},
+	"open_kelp": {
+		"sky_top": "#9c8a42", "sky_mid": "#c4b266", "sky_low": "#e4d49a",
+		"night_top": "#1c2018", "night_mid": "#2e3828", "night_low": "#4e5a3c",
+		"sun": "#ffedb8", "cloud": "#f2e8c6",
+		"w_shallow": "#5a5a34", "w_mid": "#3c4024", "w_deep": "#202414",
+		"w_surface": "#f2e2b0",
+		"mtn_far": "#8a7a4a", "mtn_mid": "#665c34", "mtn_near": "#44421f",
+		"tree": "#7a6a2a", "tree_dark": "#544a1c",
+		"bank": "#a68a42", "bank_dark": "#6a5a28", "bank_light": "#ccb46a",
+		"bank_soil": "#4e4020", "bank_soil_light": "#66562e",
+	},
+	"open_trench": {
+		"sky_top": "#5a3a4a", "sky_mid": "#82585e", "sky_low": "#b4866a",
+		"night_top": "#160c18", "night_mid": "#261626", "night_low": "#40283a",
+		"sun": "#e8d0c0", "cloud": "#d8bca8",
+		"w_shallow": "#3a2a32", "w_mid": "#241a24", "w_deep": "#120c14",
+		"w_surface": "#d8b090",
+		"mtn_far": "#6a4a52", "mtn_mid": "#4c3440", "mtn_near": "#30202c",
+		"tree": "#5a3a3a", "tree_dark": "#3e2628",
+		"bank": "#6a4a3a", "bank_dark": "#46302a", "bank_light": "#8a6250",
+		"bank_soil": "#3a2a26", "bank_soil_light": "#4e3a32",
 	},
 	"island": {
 		"sky_top": "#dc8a42", "sky_mid": "#eda95e", "sky_low": "#f7d69c",

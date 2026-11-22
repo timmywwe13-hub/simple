@@ -6,9 +6,20 @@ extends RefCounted
 ## list. Bump VERSION and add a new entry on every release; the menu shows
 ## a "!" badge until the player opens the screen once (GameState.seen_version).
 
-const VERSION := "1.9"
+const VERSION := "1.9.1"
 
 const ENTRIES := [
+	{
+		"version": "1.9.1",
+		"title": "THE QUEEN'S WAKE",
+		"items": [
+			"THE HARVEST QUEEN, UPGRADED - the event hull is now the best boat in the creek: speed 260, fish value +45%, and open-water rare, epic and legendary fish bite 35% more often. She also wears a striped festival canopy, twin lanterns, a pumpkin prow and a trail of golden leaves.",
+			"MORE OPEN WATER - the open sea is now a three-zone voyage. Sail east at the edge for the KELP SHELF, then again for the MIDNIGHT TRENCH; sail west to work back to shore. Each zone has its own palette, landmarks and fishing pool.",
+			"SEVEN NEW OPEN-WATER FISH - Kelp Bass, Garibaldi, Sheephead and Sunset Wrasse in the kelp; Gulper Eel, Vampire Squid and the legendary Abyssal Angler in the trench. The base Open Water pool still bites in every zone.",
+			"ADMIN BOAT - typing 2222 now completes the 20-card album, awards and equips The Harvest Queen and opens the trophy tab, so the event boat can be tested without opening twenty packs.",
+			"TOWN + HUD POLISH - only the nearest walk-up draws a prompt, the Quest Giver has more room beside the harvest stall, the harvest token HUD row no longer crowds the bucket, and the boat/bait readout has clear space while sailing.",
+		],
+	},
 	{
 		"version": "1.9",
 		"title": "THE HARVEST FEAST",
@@ -16,7 +27,7 @@ const ENTRIES := [
 			"THE HARVEST FEAST - a seasonal event runs Nov 22 00:00 to Dec 1 23:59 local time. The pond, river, lake, Deep Sea and Open Water all turn autumn: gold-and-rust skies, orange-red canopies, straw banks, deep umber water, drifting leaves, pumpkins, corn bundles, straw bales, a lit quay lantern and a heavier cabin smoke. Dusk arrives about two in-game hours earlier.",
 			"THE LONG TABLE - a sixth Town walk-up. Donate fish to grow the trestle table through four stages; every donation pays Feast tokens, and finishing the table hands out a bonus card pack.",
 			"20-CARD ALBUM - 5x4 cards across Fish, Feast, Places and Critters. Packs open immediately: one free pack per event day, or 20 tokens for a three-card pack. Each pack guarantees a new card until the set is complete, duplicates pay 5 tokens and stack as SPARES, and hard pity lands at six packs.",
-			"THE HARVEST QUEEN - finish 20/20 and the gilded autumn hull is awarded automatically with a trophy reveal. She has exactly the Sea Trawler's stats (speed 215, value +20%), can never be bought, and is saved as a normal owned boat.",
+			"THE HARVEST QUEEN - finish 20/20 and the gilded autumn hull is awarded automatically with a trophy reveal. She is the best hull in the creek (speed 260, value +45%, open-water rare bites +35%), can never be bought, and is saved as a normal owned boat.",
 			"FIVE NEW FISH - Pumpkinseed Sunny (pond), Cranberry Darter (river), Maple Leaf Koi (lake), Wattle Grouper (Deep Sea) and The Grand Tom (night, anywhere). The Grand Tom card is also granted on the legendary catch. Three new quests pay tokens: A Full Plate, Potluck and The Grand Tom.",
 			"THE AUTUMN UI PASS - one season token table re-skins every screen: chestnut panels with walnut borders and wheat highlights, notched ribbon titles, umber buttons with amber focus rings, leaf corner sprigs, dotted wheat separators, amber progress bars, parchment card faces with rarity ribbons and wax-stamp NEW! stamps. Rarity colours, fish art, water and text sizes are untouched.",
 			"DEC 1 DEADLINE - the album header counts down (CARDS CLOSE TONIGHT on Dec 1), the ALBUM tab carries a countdown pill and the HUD chip warns in the final three days. After the close, the album and trophy stay readable forever, empty slots read RETURNS NOV 22, and the palette reverts on the next screen.",

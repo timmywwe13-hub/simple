@@ -193,6 +193,18 @@ var in_boat := false
 var boat_pos := Vector2.ZERO
 ## True while sailing the open-water section past the edge of a spot.
 var open_water := false
+## The open sea is one connected route with three distinct zones. Sailing
+## east at the edge moves one zone deeper; sailing west moves back toward
+## shore. Zone 0 is the original Open Water.
+const OPEN_ZONES := [
+	{"id": "open", "name": "OPEN WATER", "tagline": "NOTHING BUT SWELL AND HORIZON",
+		"fish_zone": ""},
+	{"id": "open_kelp", "name": "KELP SHELF", "tagline": "GOLDEN WEEDS AND SHALLOW REEFS",
+		"fish_zone": "kelp"},
+	{"id": "open_trench", "name": "MIDNIGHT TRENCH", "tagline": "COLD DARK WATER AND OLD WRECKS",
+		"fish_zone": "trench"},
+]
+var open_zone := 0
 var season_art_state := ""
 var harvest_award_t := 0.0
 ## The spot we sailed away from, restored when we sail back west.
@@ -370,9 +382,25 @@ func _spawn_tunnel() -> void:
 	add_child(tunnel)
 
 
+func _open_zone_data() -> Dictionary:
+	return OPEN_ZONES[clampi(open_zone, 0, OPEN_ZONES.size() - 1)]
+
+
+func _open_zone_fish_tag() -> String:
+	return String(_open_zone_data().get("fish_zone", ""))
+
+
+## The pool for the current water. Open-water zones share the base "open"
+## region and add their own zone-tagged fish on top.
+func _fish_pool_here() -> Array[Dictionary]:
+	if open_water:
+		return FishDB.fish_pool("open", weather, is_night, _season_id(), _open_zone_fish_tag())
+	return FishDB.fish_pool(region, weather, is_night, _season_id())
+
+
 func _build_ambient_fish() -> void:
 	ambient_fish.clear()
-	var pool := FishDB.fish_pool("open" if open_water else region, weather, is_night, _season_id())
+	var pool := _fish_pool_here()
 	if pool.size() == 0:
 		pool = FishDB.fish_pool("pond", weather, is_night, _season_id())
 	var count := 7
@@ -943,17 +971,23 @@ func _update_world(dt: float) -> void:
 				msg("BUY AN AXE IN THE SHOP TO CHOP PALMS")
 		if _key_edge(KEY_E):
 			_chop_nearest_palm()
-	# sailing east from the Deep Sea reaches Coconut Isle
-	if not is_island and in_boat and not open_water and boat_pos.x >= view_size.x - 20.0 \
-			and region == "ocean" and Input.get_action_strength("move_right") > 0.1:
-		_enter_island()
-	# sailing off the edge of the water loads the open-water section
-	if not is_island and in_boat and not open_water and boat_pos.x >= view_size.x - 20.0 \
-			and Input.get_action_strength("move_right") > 0.1:
-		_enter_open_water()
-	elif open_water and boat_pos.x <= 20.0 \
-			and Input.get_action_strength("move_left") > 0.1:
-		_exit_open_water()
+	var move_right := Input.get_action_strength("move_right") > 0.1
+	var move_left := Input.get_action_strength("move_left") > 0.1
+	# sailing east from the Deep Sea reaches Coconut Isle; every other shore
+	# opens into the three-zone open-water route
+	if not is_island and in_boat and not open_water and boat_pos.x >= view_size.x - 20.0 and move_right:
+		if region == "ocean":
+			_enter_island()
+		else:
+			_enter_open_water()
+	elif open_water and move_right and boat_pos.x >= view_size.x - 20.0:
+		if open_zone < OPEN_ZONES.size() - 1:
+			_change_open_zone(1)
+	elif open_water and move_left and boat_pos.x <= 20.0:
+		if open_zone > 0:
+			_change_open_zone(-1)
+		else:
+			_exit_open_water()
 	if _key_edge(KEY_I):
 		_on_index(true)
 		# opening the index ends this frame's world update, so a click made
@@ -1035,6 +1069,7 @@ func _enter_island() -> void:
 	_set_region("island")
 	is_island = true
 	open_water = false
+	open_zone = 0
 	in_boat = false
 	axe_out = false
 	rod_out = true
@@ -1053,6 +1088,7 @@ func _exit_island() -> void:
 	is_island = false
 	_set_region("ocean")
 	open_water = false
+	open_zone = 0
 	in_boat = true
 	axe_out = false
 	rod_out = true
@@ -1250,6 +1286,7 @@ func _toggle_boat() -> void:
 ## section: a wide body of open sea with its own fish for the index.
 func _enter_open_water() -> void:
 	open_water = true
+	open_zone = 0
 	open_water_from = region
 	_set_region("open")
 	boat_pos = Vector2(90.0, _boat_surface_y())
@@ -1257,13 +1294,28 @@ func _enter_open_water() -> void:
 		tunnel.visible = false
 	_build_ambient_fish()
 	GameState.play_sound("cast")
-	msg("OPEN WATER - UNCHARTED FISH LURK BELOW")
+	msg("OPEN WATER - SAIL EAST FOR THE KELP SHELF - UNCHARTED FISH LURK BELOW")
+	fx_flash(0.8)
+
+
+## Sail east/west at the edge of an open-water zone. The route is Open Water
+## -> Kelp Shelf -> Midnight Trench, so the boat gets a real voyage instead
+## of a single static screen.
+func _change_open_zone(delta: int) -> void:
+	open_zone = clampi(open_zone + delta, 0, OPEN_ZONES.size() - 1)
+	var z := _open_zone_data()
+	_set_region(String(z.get("id", "open")))
+	boat_pos = Vector2(90.0 if delta > 0 else view_size.x - 90.0, _boat_surface_y())
+	_build_ambient_fish()
+	GameState.play_sound("cast")
+	msg("%s - %s" % [String(z.get("name", "OPEN WATER")), String(z.get("tagline", ""))])
 	fx_flash(0.8)
 
 
 ## Sail back west to return to the regular fishing spot.
 func _exit_open_water() -> void:
 	open_water = false
+	open_zone = 0
 	_set_region(open_water_from)
 	boat_pos = Vector2(view_size.x - 110.0, boat_pos.y)
 	if tunnel:
@@ -1389,7 +1441,7 @@ func _lantern() -> Dictionary:
 
 
 func _select_catch() -> void:
-	var pool := FishDB.fish_pool("open" if open_water else region, weather, is_night, _season_id())
+	var pool := _fish_pool_here()
 	if pool.size() == 0:
 		pool = FishDB.fish_pool("pond", weather, is_night, _season_id())
 	var weights := []
@@ -1400,9 +1452,16 @@ func _select_catch() -> void:
 		bait_data = ShopDB.item("baits", cast_bait)
 		boost = bait_data.get("rarity_boost", [])
 	var night_rare := float(_lantern().get("night_rare", 1.0))
+	# The Harvest Queen's signature perk: open-water rare+ fish are more
+	# willing to bite. Other hulls keep the base weighting.
+	var queen_rare := 1.0
+	if open_water:
+		queen_rare = float(GameState.current_boat().get("open_rare_bonus", 1.0))
 	for f in pool:
 		var w := float(f.get("catch_rate", 1.0))
 		var r := String(f.get("rarity", "Common"))
+		if open_water and queen_rare > 1.0 and (r == "Rare" or r == "Epic" or r == "Legendary"):
+			w *= queen_rare
 		if bool(f.get("anywhere", false)):
 			# roaming monsters bite no matter what bait is on the hook
 			pass
@@ -2253,6 +2312,7 @@ func _on_reset_progress() -> void:
 	# a Deep Sea save that reset just locked again
 	is_island = false
 	open_water = false
+	open_zone = 0
 	in_boat = false
 	axe_out = false
 	rod_out = true
@@ -3205,6 +3265,9 @@ func _draw_mountains() -> void:
 
 ## Horizon decor for the open-water section: low sand islands with palms.
 func _draw_islands(t: float) -> void:
+	if region == "open_trench":
+		_draw_trench_rocks(t)
+		return
 	var nf := _night_factor()
 	var sand := _art_c("bank").darkened(0.1 + nf * 0.45)
 	var sand_l := _art_c("bank_light").lightened(0.05).darkened(nf * 0.5)
@@ -3222,6 +3285,60 @@ func _draw_islands(t: float) -> void:
 			var reach := 16.0 + float(k) * 6.0
 			_pixel_rect(Rect2(ix + 2.0, fy, reach, 5.0), leaf)
 			_pixel_rect(Rect2(ix - 2.0 - reach, fy, reach, 5.0), leaf)
+
+
+## Jagged black rocks replace the palm islands in the Midnight Trench.
+func _draw_trench_rocks(t: float) -> void:
+	var nf := _night_factor()
+	var rock := _art_c("mtn_near").darkened(0.16).lerp(Color("#070b16"), nf * 0.55)
+	var rock_l := _art_c("mtn_mid").darkened(0.10).lerp(Color("#111a2c"), nf * 0.45)
+	for i in range(4):
+		var x := view_size.x * (0.12 + 0.24 * float(i)) + sin(t * 0.18 + float(i) * 1.3) * 2.0
+		var h := 34.0 + float(i % 3) * 22.0
+		var base := water_line - 2.0
+		_pixel_rect(Rect2(x - 22.0, base - h * 0.55, 44.0, h * 0.55), rock)
+		_pixel_rect(Rect2(x - 13.0, base - h, 26.0, h * 0.5), rock_l)
+		_pixel_rect(Rect2(x - 6.0, base - h - 8.0, 12.0, 10.0), rock_l.lightened(0.06))
+		_pixel_rect(Rect2(x - 30.0, base - 4.0, 60.0, 5.0), rock.darkened(0.18))
+
+
+## Dense swaying kelp forest for the Kelp Shelf.
+func _prop_kelp(t: float, nf: float) -> void:
+	var stalk := _art_c("tree").darkened(0.12).lerp(Color("#0f3028"), nf * 0.35)
+	var blade := _art_c("tree").lightened(0.10).lerp(Color("#1a4a3c"), nf * 0.30)
+	for i in range(10):
+		var bx := 34.0 + float(i) * (view_size.x - 68.0) / 9.0
+		for k in range(4):
+			var y := water_line + 34.0 + float(k) * 27.0
+			if y > view_size.y - 8.0:
+				break
+			var sway := sin(t * 1.25 + float(i) * 0.9 + float(k) * 0.55) * 7.0
+			_pixel_rect(Rect2(bx + sway, y, 4.0, 26.0), stalk)
+			_pixel_rect(Rect2(bx + sway - 8.0, y + 7.0, 9.0, 3.0), blade)
+			_pixel_rect(Rect2(bx + sway + 3.0, y + 14.0, 8.0, 3.0), blade.darkened(0.08))
+
+
+## A half-sunk wreck gives the Trench a landmark to sail toward.
+func _prop_wreck(t: float, nf: float) -> void:
+	var x := view_size.x * 0.76
+	var y := water_line - 1.0 + sin(t * 0.9) * 1.2
+	var hull := _art_c("bank_dark").darkened(0.28).lerp(Color("#070c16"), nf * 0.45)
+	var wood := _art_c("bank").darkened(0.30).lerp(Color("#10192a"), nf * 0.40)
+	var sail := _art_c("cloud").darkened(0.28).lerp(Color("#1c2740"), nf * 0.50)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(x - 58.0, y), Vector2(x - 38.0, y - 17.0), Vector2(x + 30.0, y - 11.0),
+		Vector2(x + 64.0, y + 3.0), Vector2(x + 18.0, y + 8.0)]), hull)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(x - 38.0, y - 17.0), Vector2(x - 30.0, y - 24.0), Vector2(x + 28.0, y - 17.0),
+		Vector2(x + 30.0, y - 11.0)]), wood)
+	# broken mast and tattered sail
+	draw_line(Vector2(x - 6.0, y - 16.0), Vector2(x - 13.0, y - 82.0), wood, 4.0)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(x - 13.0, y - 80.0), Vector2(x + 28.0, y - 64.0),
+		Vector2(x + 16.0, y - 43.0), Vector2(x - 11.0, y - 50.0)]), sail)
+	_pixel_rect(Rect2(x + 24.0, y - 66.0, 20.0, 3.0), wood.darkened(0.2))
+	for i in range(4):
+		_pixel_rect(Rect2(x - 46.0 + float(i) * 18.0, y - 4.0, 3.0, 13.0), wood.darkened(0.25))
 
 
 func _draw_pine(x: float, base_y: float, h: float, w: float, c: Color) -> void:
@@ -3625,6 +3742,10 @@ func _draw_region_props(t: float) -> void:
 				_prop_gulls(t)
 			"sailboat":
 				_prop_sailboat(t, nf)
+			"kelp":
+				_prop_kelp(t, nf)
+			"wreck":
+				_prop_wreck(t, nf)
 			"jetty":
 				_prop_jetty(nf)
 			_:
@@ -4076,7 +4197,7 @@ func _draw_boat_at(t: float, c: Vector2, moored: bool, front: bool) -> void:
 			rim = Color("#d8b088")
 			cabin = true
 		"boat_harvest":
-			w = 138.0
+			w = 164.0
 			hull = Color("#a3662f")
 			hull_dark = Color("#4a2d17")
 			rim = Color("#f2b03c")
@@ -4095,6 +4216,8 @@ func _draw_boat_at(t: float, c: Vector2, moored: bool, front: bool) -> void:
 		return
 	# shadow / wake at the waterline, so the hull sits ON the surface
 	_pixel_rect(Rect2(b.x - hw - 4.0, water_line + 2.0, w + 8.0, 5.0), Color("#0a1120", 0.28))
+	if id == "boat_harvest" and not moored and walking:
+		_draw_harvest_wake(b, hw, t)
 	if not moored and walking:
 		for i in range(3):
 			_pixel_rect(Rect2(b.x - hw - 14.0 - float(i) * 9.0, water_line + 2.0 + float(i) * 3.0,
@@ -4132,8 +4255,53 @@ func _draw_boat_at(t: float, c: Vector2, moored: bool, front: bool) -> void:
 		_pixel_rect(Rect2(b.x - hw + 16.0 + float(i) * (w - 40.0) * 0.5, b.y + 2.0, 2.0, 6.0),
 				hull.darkened(0.22))
 	if id == "boat_harvest":
+		_draw_harvest_canopy(b, hw, w)
 		_draw_harvest_boat_details(b, hw, w)
 	_draw_hull_waterline(b.x, hw, w)
+
+
+## Golden leaves trail behind the Queen while she is under way.
+func _draw_harvest_wake(b: Vector2, hw: float, t: float) -> void:
+	for i in range(5):
+		var x := b.x - hw - 7.0 - float(i) * 8.0
+		var y := water_line + 4.0 + sin(t * 3.1 + float(i) * 1.4) * 2.0
+		var c: Color = [GameTheme.PUMPKIN, GameTheme.GOLD, GameTheme.EMBER, GameTheme.LEAF][i % 4]
+		c.a = 0.55
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(x, y), Vector2(x + 6.0, y - 3.0), Vector2(x + 7.0, y + 2.0)]), c)
+
+
+## A striped festival canopy, twin lanterns and a pumpkin finial make the
+## Queen read as the event's grand prize from across the water.
+func _draw_harvest_canopy(b: Vector2, hw: float, w: float) -> void:
+	var roof_y := b.y - 96.0
+	var left := b.x - hw + 8.0
+	var right := b.x + hw - 8.0
+	# posts
+	for px in [-hw * 0.64, hw * 0.64]:
+		_pixel_rect(Rect2(b.x + px - 2.0, roof_y + 4.0, 4.0, 94.0), GameTheme.WOOD_DARK)
+		_pixel_rect(Rect2(b.x + px - 3.0, roof_y + 2.0, 6.0, 4.0), GameTheme.GOLD.darkened(0.18))
+	# striped roof and scalloped valance
+	var bands := 8
+	var bw := (right - left) / float(bands)
+	for i in range(bands):
+		var c: Color = GameTheme.CREAM if i % 2 == 0 else GameTheme.PUMPKIN
+		_pixel_rect(Rect2(left + float(i) * bw, roof_y, bw + 1.0, 10.0), c)
+		_pixel_rect(Rect2(left + float(i) * bw, roof_y + 12.0, bw, 4.0), c.darkened(0.04))
+		_pixel_rect(Rect2(left + float(i) * bw + 2.0, roof_y + 16.0, bw - 4.0, 2.0),
+				c.darkened(0.12))
+	_pixel_rect(Rect2(left - 2.0, roof_y - 2.0, right - left + 4.0, 3.0), GameTheme.GOLD)
+	_pixel_rect(Rect2(left, roof_y + 10.0, right - left, 2.0), GameTheme.EMBER.darkened(0.24))
+	# pumpkin finial
+	_pixel_rect(Rect2(b.x - 4.0, roof_y - 12.0, 8.0, 10.0), GameTheme.PUMPKIN)
+	_pixel_rect(Rect2(b.x - 2.0, roof_y - 15.0, 4.0, 4.0), GameTheme.PUMPKIN.lightened(0.16))
+	_pixel_rect(Rect2(b.x - 1.0, roof_y - 18.0, 2.0, 4.0), GameTheme.LEAF)
+	# twin lanterns hanging from the valance
+	for px in [-hw * 0.34, hw * 0.34]:
+		var lx: float = b.x + float(px)
+		draw_line(Vector2(lx, roof_y + 16.0), Vector2(lx, roof_y + 22.0), GameTheme.WOOD_DARK, 1.0)
+		draw_circle(Vector2(lx, roof_y + 26.0), 8.0, Color(1.0, 0.76, 0.30, 0.16))
+		_pixel_rect(Rect2(lx - 3.0, roof_y + 22.0, 6.0, 6.0), GameTheme.GOLD)
 
 
 ## The Harvest Queen: varnished planks, a leaf garland on the bow, a stern
@@ -4149,6 +4317,11 @@ func _draw_harvest_boat_details(b: Vector2, hw: float, w: float) -> void:
 		var lc: Color = [GameTheme.PUMPKIN, GameTheme.EMBER, GameTheme.GOLD, GameTheme.LEAF][i % 4]
 		draw_colored_polygon(PackedVector2Array([
 			Vector2(lx, ly), Vector2(lx + 5.0, ly - 3.0), Vector2(lx + 6.0, ly + 2.0)]), lc)
+	# carved pumpkin on the bow
+	var px := b.x - hw + 5.0
+	_pixel_rect(Rect2(px, b.y - 13.0, 13.0, 10.0), GameTheme.PUMPKIN)
+	_pixel_rect(Rect2(px + 3.0, b.y - 16.0, 7.0, 4.0), GameTheme.PUMPKIN.lightened(0.12))
+	_pixel_rect(Rect2(px + 6.0, b.y - 18.0, 2.0, 3.0), GameTheme.LEAF)
 	# stern lantern on a short post
 	_pixel_rect(Rect2(b.x + hw - 16.0, b.y - 24.0, 3.0, 18.0), GameTheme.WOOD_DARK)
 	_pixel_rect(Rect2(b.x + hw - 19.0, b.y - 30.0, 9.0, 8.0), GameTheme.HUSK)
@@ -4301,7 +4474,9 @@ func _draw_hud() -> void:
 	var harvest_on := GameState.harvest_season_open()
 	if harvest_on:
 		_draw_harvest_chip(coins_r)
-	var area_label := "OPEN WATER" if open_water else RegionArt.display(region)
+	var area_label := RegionArt.display(region)
+	if open_water:
+		area_label = "%s  %d/%d" % [area_label.to_upper(), open_zone + 1, OPEN_ZONES.size()]
 	var rt := "%s  %s  %s" % [area_label.to_upper(),
 			"NIGHT" if is_night else "DAY", _weather_label()]
 	var left_r: Rect2 = _hud_panel("BUCKET %d/%d" % [GameState.inventory_count(), GameState.bucket_capacity()], false)
@@ -4325,7 +4500,9 @@ func _draw_hud() -> void:
 			PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 120.0),
 					"G AXE - E OR CLICK CHOP - WALK WEST TO SAIL HOME",
 					GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
-		else:
+		elif not open_water:
+			# Open water already has its own bottom hint; the fishing-spot
+			# line would collide with the boat/bait readout on the right.
 			PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 120.0),
 					"SPOTS 1-4 - R ROD - B BOAT - I INDEX - ESC PAUSE",
 					GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
@@ -4372,9 +4549,13 @@ func _draw_hud() -> void:
 			if touch:
 				hint = "AXE AND CHOP BUTTONS - STICK LEFT TO SAIL HOME - MENU FOR SHOP"
 		elif open_water:
-			hint = "OPEN WATER - A/D SAIL - SPACE OR CLICK TO CAST - SAIL WEST TO RETURN"
+			var z := _open_zone_data()
+			var west := "RETURN TO SHORE" if open_zone == 0 else "WEST: " + String(OPEN_ZONES[open_zone - 1].get("name", ""))
+			var east := "FAR EDGE" if open_zone >= OPEN_ZONES.size() - 1 else "EAST: " + String(OPEN_ZONES[open_zone + 1].get("name", ""))
+			hint = "%s - A/D SAIL - SPACE TO CAST - %s / %s" % [
+				String(z.get("name", "OPEN WATER")), west, east]
 			if touch:
-				hint = "STICK TO SAIL - TAP TO CAST - SAIL WEST TO RETURN"
+				hint = "STICK TO SAIL - TAP TO CAST - WEST / EAST AT THE EDGE"
 		elif in_boat:
 			hint = "A/D SAIL - AIM WITH MOUSE - SPACE OR CLICK TO CAST - B TO LAND"
 			if touch:

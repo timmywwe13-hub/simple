@@ -10,6 +10,8 @@ static var REGION_DISPLAY := {
 	"lake": "Lake",
 	"ocean": "Deep Sea",
 	"open": "Open Water",
+	"open_kelp": "Kelp Shelf",
+	"open_trench": "Midnight Trench",
 	"island": "Coconut Isle",
 }
 static var REGION_UNLOCK_COST := {
@@ -145,6 +147,61 @@ static var FISH := {
 		"palette": {"body": "#3a4a7a", "belly": "#7a8ac0", "fin": "#222c4c", "eye": "#ffe08a"},
 		"weight_kg": [40.0, 90.0], "coin": 800, "catch_rate": 0.04,
 		"desc": "A living fossil from another age.",
+	},
+	# --- Open Water zones: reached by sailing east past the first open sea ---
+	"kelp_bass": {
+		"id": "kelp_bass", "name": "Kelp Bass", "rarity": "Common", "region": "open", "zone": "kelp",
+		"shape": "long", "pattern": "stripes",
+		"palette": {"body": "#6f8f3f", "belly": "#d8e6a8", "fin": "#4e6a2c", "eye": "#141d27"},
+		"weight_kg": [0.5, 2.5], "coin": 42, "catch_rate": 0.85,
+		"desc": "Hides in the golden kelp and strikes at anything shiny.",
+	},
+	"garibaldi": {
+		"id": "garibaldi", "name": "Garibaldi", "rarity": "Uncommon", "region": "open", "zone": "kelp",
+		"shape": "round", "pattern": "plain",
+		"palette": {"body": "#f08a24", "belly": "#ffd08a", "fin": "#c25a12", "eye": "#141d27"},
+		"weight_kg": [0.4, 2.0], "coin": 115, "catch_rate": 0.5,
+		"desc": "A fearless orange spark in the green kelp forest.",
+	},
+	"sheephead": {
+		"id": "sheephead", "name": "Sheephead", "rarity": "Rare", "region": "open", "zone": "kelp",
+		"shape": "long", "pattern": "spots",
+		"palette": {"body": "#8a7a80", "belly": "#e0d4c8", "fin": "#5f5058", "eye": "#141d27"},
+		"features": ["fangs"],
+		"weight_kg": [2.0, 9.0], "coin": 240, "catch_rate": 0.2,
+		"desc": "A reef bruiser with a sheepshead grin and crushing teeth.",
+	},
+	"sunset_wrasse": {
+		"id": "sunset_wrasse", "name": "Sunset Wrasse", "rarity": "Epic", "region": "open", "zone": "kelp",
+		"shape": "round", "pattern": "bands",
+		"palette": {"body": "#8f4f9a", "belly": "#f2b05e", "fin": "#5e3268", "eye": "#ffe08a"},
+		"features": ["crest"],
+		"weight_kg": [1.0, 5.0], "coin": 460, "catch_rate": 0.075,
+		"desc": "Its scales shift from violet to sunset gold in the shallows.",
+	},
+	"gulper_eel": {
+		"id": "gulper_eel", "name": "Gulper Eel", "rarity": "Rare", "region": "open", "zone": "trench",
+		"shape": "eel", "pattern": "plain",
+		"palette": {"body": "#2a2438", "belly": "#6a5a7a", "fin": "#171222", "eye": "#f2c14e"},
+		"features": ["fangs", "big_mouth"],
+		"weight_kg": [3.0, 12.0], "coin": 330, "catch_rate": 0.18,
+		"desc": "A ribbon of black water with a mouth like a trapdoor.",
+	},
+	"vampire_squid": {
+		"id": "vampire_squid", "name": "Vampire Squid", "rarity": "Epic", "region": "open", "zone": "trench",
+		"shape": "deep", "pattern": "glow",
+		"palette": {"body": "#5a1f32", "belly": "#b04a5e", "fin": "#32101e", "eye": "#ffe08a"},
+		"features": ["big_eye", "fangs", "glow"],
+		"weight_kg": [2.0, 8.0], "coin": 620, "catch_rate": 0.06,
+		"desc": "A crimson deep-sea hunter that glows before it strikes.",
+	},
+	"abyssal_angler": {
+		"id": "abyssal_angler", "name": "Abyssal Angler", "rarity": "Legendary", "region": "open", "zone": "trench",
+		"shape": "deep", "pattern": "plain",
+		"palette": {"body": "#141a2e", "belly": "#3a4a66", "fin": "#0a0e1a", "eye": "#ffe45c"},
+		"features": ["lantern", "fangs", "big_mouth"],
+		"weight_kg": [5.0, 20.0], "coin": 1250, "catch_rate": 0.012,
+		"desc": "The trench's own lantern. Its light is the last thing most fish see.",
 	},
 	# --- 20 new species: pond, river, lake, deep sea and open water ---
 	"bluegill": {
@@ -523,14 +580,22 @@ static func _season_match(f: Dictionary, season: String) -> bool:
 ## roaming monsters (fish flagged "anywhere"), filtered by the weather and
 ## the hour. A fish with a "weather" tag only bites in that weather; one
 ## with a "time" tag only bites by day or by night.
-static func fish_pool(region: String, weather := "", night := false, season := "") -> Array[Dictionary]:
+static func fish_pool(region: String, weather := "", night := false, season := "",
+		zone := "") -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
-	for f in fish_by_region(region, season):
+	var base_region := "open" if region == "open" or region.begins_with("open_") else region
+	for f in fish_by_region(base_region, season):
+		var fish_zone := String(f.get("zone", ""))
+		# Zone-specific fish only appear in their own open-water zone. Fish
+		# without a zone (and roaming monsters) appear in every zone.
+		if zone != "" and fish_zone != "" and fish_zone != zone:
+			continue
+		if zone == "" and fish_zone != "":
+			continue
 		out.append(f)
 	for fid in FISH.keys():
 		var roaming: Dictionary = FISH[fid]
-		if bool(roaming.get("anywhere", false)) and _season_match(roaming, season) \
-				and not out.has(roaming):
+		if bool(roaming.get("anywhere", false)) and _season_match(roaming, season) 				and not out.has(roaming):
 			out.append(roaming)
 	var filtered: Array[Dictionary] = []
 	for f in out:

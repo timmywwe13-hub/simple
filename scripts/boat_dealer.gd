@@ -44,9 +44,13 @@ func interact() -> void:
 		name_l.position = Vector2(12.0, 5.0)
 		var desc_l := UILib.label(row, String(d.get("desc", "")), 12, GameTheme.SUBTEXT)
 		desc_l.position = Vector2(12.0, 26.0)
-		var stat_l := UILib.label(row, "SPEED %.0f  VALUE +%.0f%%" % [float(d.get("speed", 90.0)),
-				(float(d.get("value_mult", 1.0)) - 1.0) * 100.0], 12, GameTheme.LEAF)
-		stat_l.position = Vector2(300.0, 10.0)
+		var stat_txt := "SPEED %.0f  VALUE +%.0f%%" % [float(d.get("speed", 90.0)),
+				(float(d.get("value_mult", 1.0)) - 1.0) * 100.0]
+		var rare_bonus := float(d.get("open_rare_bonus", 1.0))
+		if rare_bonus > 1.0:
+			stat_txt += "  OPEN RARE +%.0f%%" % ((rare_bonus - 1.0) * 100.0)
+		var stat_l := UILib.label(row, stat_txt, 12, GameTheme.LEAF)
+		stat_l.position = Vector2(286.0, 10.0)
 		if bool(d.get("award_only", false)) and not owned:
 			var plaque := UILib.pill(row, "20/20 REWARD", GameTheme.PUMPKIN, 11, UILib.CREAM)
 			plaque.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
