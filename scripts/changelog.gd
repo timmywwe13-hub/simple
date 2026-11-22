@@ -16,7 +16,7 @@ const ENTRIES := [
 			"THE HARVEST QUEEN, UPGRADED - the event hull is now the best boat in the creek: speed 260, fish value +45%, and open-water rare, epic and legendary fish bite 35% more often. She also wears a striped festival canopy, twin lanterns, a pumpkin prow and a trail of golden leaves.",
 			"MORE OPEN WATER - the open sea is now a three-zone voyage. Sail east at the edge for the KELP SHELF, then again for the MIDNIGHT TRENCH; sail west to work back to shore. Each zone has its own palette, landmarks and fishing pool.",
 			"SEVEN NEW OPEN-WATER FISH - Kelp Bass, Garibaldi, Sheephead and Sunset Wrasse in the kelp; Gulper Eel, Vampire Squid and the legendary Abyssal Angler in the trench. The base Open Water pool still bites in every zone.",
-			"ADMIN BOAT - typing 2222 now completes the 20-card album, awards and equips The Harvest Queen and opens the trophy tab, so the event boat can be tested without opening twenty packs.",
+			"ADMIN UNLOCK - typing 2222 now completes the Fish Index (including seasonal fish), the 20-card album, awards and equips The Harvest Queen and opens the trophy tab, so every catch and the event boat can be tested immediately.",
 			"TOWN + HUD POLISH - only the nearest walk-up draws a prompt, the Quest Giver has more room beside the harvest stall, the harvest token HUD row no longer crowds the bucket, and the boat/bait readout has clear space while sailing.",
 		],
 	},

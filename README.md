@@ -119,7 +119,7 @@ res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 - **The Harvest Queen, upgraded** - the event hull is now the best boat in the creek: **speed 260**, **fish value +45%**, and **open-water rare/epic/legendary fish bite 35% more often**. She wears a striped festival canopy, twin lanterns, a pumpkin prow and a trail of golden leaves
 - **More open water** - the open sea is a three-zone voyage: **Open Water → Kelp Shelf → Midnight Trench**. Sail east at the edge to go deeper and west to return, with a distinct palette, landmarks and fishing pool in each zone
 - **Seven new open-water fish** - Kelp Bass, Garibaldi, Sheephead and Sunset Wrasse in the kelp; Gulper Eel, Vampire Squid and the legendary Abyssal Angler in the trench
-- **Admin boat** - `2222` now completes the album, awards and equips The Harvest Queen, and opens the trophy tab
+- **Admin unlock** - `2222` now completes the **entire Fish Index including seasonal fish**, completes the album, awards and equips The Harvest Queen, and opens the trophy tab
 - **Town + HUD polish** - nearest-only interaction prompts, more Quest Giver spacing, clearer harvest-token HUD spacing, and a clean boat/bait readout while sailing
 
 ## Updates (v1.9)

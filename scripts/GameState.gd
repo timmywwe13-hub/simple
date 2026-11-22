@@ -317,9 +317,11 @@ func grant_everything() -> void:
 	axe_level = 2
 	coconuts = maxi(coconuts, 999)
 	chopped_palms = {}
-	# complete Fish Index, every species recorded at its top weight
+	# complete Fish Index, every species recorded at its top weight. Use the
+	# raw table (not all_ids) so seasonal fish are included even when the
+	# event is closed.
 	_init_index()
-	for fid in FishDB.all_ids():
+	for fid in FishDB.FISH.keys():
 		var id := String(fid)
 		var f := FishDB.fish_data(id)
 		var wg: Array = f.get("weight_kg", [0.1, 1.0])
@@ -331,7 +333,7 @@ func grant_everything() -> void:
 		index[id] = entry
 	total_caught = maxi(total_caught, index.size())
 	# a handful of top-value fish in the bucket so selling can be tested
-	var pool := FishDB.all_ids()
+	var pool := FishDB.FISH.keys()
 	# Force the Harvest Feast on and hand over the completed album AND the
 	# Harvest Queen, so the event boat, trophy tab and seasonal screens can
 	# all be tested immediately instead of after twenty packs.
@@ -1366,7 +1368,9 @@ func quest_reward(q: Dictionary) -> int:
 	return int(round(float(q.get("reward", 0)) * money_mult()))
 
 func _init_index() -> void:
-	var ids := FishDB.all_ids()
+	# Every defined species gets an entry, including seasonal fish that are
+	# not currently in the catch rotation.
+	var ids := FishDB.FISH.keys()
 	for fid in ids:
 		var fid_s := String(fid)
 		if not index.has(fid_s):
