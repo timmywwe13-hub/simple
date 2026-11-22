@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Refresh Cottage Creek Fishing</title>
+	<style>
+		:root { color-scheme: dark; }
+		* { box-sizing: border-box; }
+		html, body { min-height: 100%; margin: 0; }
+		body {
+			display: grid;
+			place-items: center;
+			padding: 24px;
+			background: radial-gradient(circle at 50% 20%, #4a2d17 0%, #2b1d16 60%, #1a1008 100%);
+			color: #f7e6c4;
+			font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			text-align: center;
+		}
+		main { max-width: 520px; }
+		h1 { margin: 0 0 10px; color: #f2b03c; font-size: clamp(24px, 6vw, 40px); }
+		p { margin: 0 0 22px; line-height: 1.6; color: #d9c39a; }
+		a {
+			display: inline-block;
+			padding: 13px 24px;
+			border: 2px solid #e8d5a8;
+			background: #e2703a;
+			color: #2a1a12;
+			font-weight: 700;
+			text-decoration: none;
+			letter-spacing: 1px;
+		}
+		small { display: block; margin-top: 18px; color: #9a8b74; }
+	</style>
+</head>
+<body>
+	<main>
+		<h1>REFRESHING THE CREEK</h1>
+		<p>Clearing the old browser cache so you get the newest build&hellip;</p>
+		<a id="again" href="./">PLAY THE LATEST BUILD</a>
+		<small>If this page does not move on its own, tap the button above.</small>
+	</main>
+	<script>
+	(async function () {
+			try {
+				if ('serviceWorker' in navigator) {
+					const regs = await navigator.serviceWorker.getRegistrations();
+					await Promise.all(regs.map((reg) => reg.unregister()));
+				}
+				if ('caches' in window) {
+					const keys = await caches.keys();
+					await Promise.all(keys.map((key) => caches.delete(key)));
+				}
+			} catch (e) {
+				/* fall through to the redirect */
+			}
+			location.replace('./?fresh=' + Date.now());
+		}());
+	</script>
+</body>
+</html>

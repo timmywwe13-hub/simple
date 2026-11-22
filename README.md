@@ -299,7 +299,10 @@ npx surge build/web https://creekfishing.surge.sh
 
 For CI, set `SURGE_TOKEN` instead of logging in interactively. Surge writes a
 `build/web/CNAME` file on deploy; it is ignored so the four domains stay
-independent.
+independent. The exporter also patches the generated service worker so a new
+build activates immediately and evicts the old cache. If a browser is still
+stuck on an older copy, open `/reset.html` on any mirror or close every game
+tab and reload.
 
 ### Netlify
 
