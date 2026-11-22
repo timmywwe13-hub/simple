@@ -25,16 +25,18 @@ const MENU_PANEL_H := 480.0
 const ART_FADE := 0.8
 
 ## Fishing minigame balance, tuned for human reaction times: a generous
-## hook window, a slow readable sweep on the timing bar, and a forgiving
-## tug-of-war for big fish - slow tension drift, a wide green band (better
-## lines widen it further), and the fish only escapes after the line has
-## been fully slack or fully strained for TUG_PEG seconds straight.
+## hook window, a readable sweep on the timing bar, and a forgiving
+## tug-of-war. The timing green picks one spot per fish and starts at 40%
+## of the bar (every rod adds 4% width). Each hooked fish randomly gets
+## either the timing minigame or the tug-of-war 50/50, regardless of
+## species or rarity. The tug green starts at 44% and drifts slowly so the
+## player has to follow it; rods and lines widen that band too.
 const BITE_WINDOW := 2.2
 const TIMING_SWEEP := 0.5
-const TIMING_ACCEPT := 0.8
 const TUG_BUILD := 0.55
 const TUG_DECAY := 0.45
-const TUG_BAND := 0.2
+const TUG_BAND := 0.22
+const TUG_GREEN_SPEED := 0.20
 const TUG_HOLD := 1.2
 const TUG_PEG := 0.8
 
@@ -43,7 +45,7 @@ const TUG_PEG := 0.8
 ## input latency - clicking the green no longer randomly reads as a miss.
 const TIMING_GRACE := 0.03
 
-## Big-fish tug: a quick tap works like a short pump, so clicking in the
+## Tug-of-war: a quick tap works like a short pump, so clicking in the
 ## green lands fish just like holding the button does.
 const TUG_TAP_PUMP := 0.07
 const TUG_TAP_PROGRESS := 0.45
@@ -123,6 +125,8 @@ var reel_pos := 0.5
 var reel_dir := 1.0
 var reel_hold := false
 var reel_tension := 0.5
+var tug_center := 0.5
+var tug_dir := 1.0
 var tug_ok_time := 0.0
 var tug_peg_time := 0.0
 var catch_fish_id := ""
@@ -131,6 +135,9 @@ var catch_new := false
 var catch_rarity := ""
 var catch_coins := 0
 var catch_perfect := false
+## True when this fish's reel uses the tug-of-war instead of the timing bar.
+## Rolled 50/50 after the hook lands, so either fish can use either mode.
+var tug_fight := false
 ## Bait used for the current cast ("" = fishing bare, caught via
 ## GameState.consume_bait() when the cast starts).
 var cast_bait := ""
@@ -707,7 +714,7 @@ func _touch_action_label() -> String:
 		STATE_BITE:
 			return "HOOK"
 		STATE_REEL:
-			return "HOLD" if _is_big_fish() else "REEL"
+			return "HOLD" if _is_tug_fight() else "REEL"
 		_:
 			return "CAST"
 
@@ -1280,11 +1287,9 @@ func _trigger_bite() -> void:
 	msg("BITE! PRESS SPACE OR CLICK TO HOOK")
 
 
-## Timing minigame target. Higher-tier rods reel faster but the green is
-## smaller *and* relocates every time the marker bounces, so holding or
-## autoclicking a fixed spot cannot land fish any more.
+## Timing minigame target. The green is chosen once when the fish is
+## hooked and stays put for that fish; better rods make it wider.
 var timing_center := 0.5
-var timing_shifts := 0
 
 func _hook_success() -> void:
 	hooked = false
@@ -1292,18 +1297,22 @@ func _hook_success() -> void:
 	_select_catch()
 	state = STATE_REEL
 	reel_active = true
-	reel_pos = 0.5
+	# Start the timing marker at the left edge so a half-bar green is still
+	# a real timing test instead of an instant click at the centre.
+	reel_pos = 0.0
 	reel_dir = 1.0
 	reel_hold = false
 	reel_tension = 0.5
+	tug_center = 0.5
+	tug_dir = 1.0 if randf() < 0.5 else -1.0
 	tug_ok_time = 0.0
 	tug_peg_time = 0.0
-	timing_shifts = 0
 	timing_center = _first_timing_center()
-	if _is_big_fish():
-		msg("HEAVY FIGHT - HOLD TO REEL, KEEP THE MARKER IN THE GREEN")
+	tug_fight = _roll_fight_mode()
+	if tug_fight:
+		msg("TUG-OF-WAR - HOLD TO REEL, FOLLOW THE GREEN")
 	else:
-		msg("PRESS IN THE GREEN ZONE")
+		msg("TIMING CAST - PRESS IN THE GREEN")
 
 
 func _hook_fail() -> void:
@@ -1315,8 +1324,13 @@ func _hook_fail() -> void:
 	fx_shake(0.6)
 
 
-func _is_big_fish() -> bool:
-	return GameTheme.get_rarity_rate(catch_rarity) < 0.25
+## 50/50 pick between the timing bar and the tug-of-war for this fish.
+func _roll_fight_mode() -> bool:
+	return randf() < 0.5
+
+
+func _is_tug_fight() -> bool:
+	return tug_fight
 
 
 func _lantern() -> Dictionary:
@@ -1382,7 +1396,7 @@ func _select_catch() -> void:
 func _update_reel(dt: float) -> void:
 	var target := rod_tip
 	bobber_pos = bobber_pos.lerp(target, clampf(dt * 0.9, 0.0, 1.0))
-	if _is_big_fish():
+	if _is_tug_fight():
 		_update_tug(dt)
 	else:
 		_update_timing(dt)
@@ -1390,16 +1404,15 @@ func _update_reel(dt: float) -> void:
 
 func _update_timing(dt: float) -> void:
 	var prev_pos := reel_pos
-	# better rods sweep faster; that speed is the upgrade's trade-off
-	reel_pos += reel_dir * dt * TIMING_SWEEP * _rod_reel_speed()
+	# The sweep speed is the same on every rod, so the wider green is a
+	# real 4% improvement instead of being cancelled by a faster marker.
+	reel_pos += reel_dir * dt * TIMING_SWEEP
 	if reel_pos > 1.0:
 		reel_pos = 1.0
 		reel_dir = -1.0
-		_shift_timing_center()
 	elif reel_pos < 0.0:
 		reel_pos = 0.0
 		reel_dir = 1.0
-		_shift_timing_center()
 	if _pressed():
 		_finish_timing(prev_pos)
 
@@ -1421,66 +1434,45 @@ func _finish_timing(prev_pos: float = -1.0) -> void:
 
 
 ## Which rod this is: 0 = Twig, 4 = Carbon/Ancient. Crafted island rods
-## rank with the shop rod they are built from.
+## sit one tier above their base shop rod.
+func _rod_id() -> String:
+	return String(GameState.gear.get("rod", "rod_stick"))
+
+
 func _rod_tier_rank() -> int:
-	var base := float(ShopDB.item("rods", String(GameState.gear.get("rod", "rod_stick"))).get("timing_window", 0.18))
-	if base >= 0.40:
-		return 4
-	if base >= 0.34:
-		return 3
-	if base >= 0.26:
-		return 2
-	if base >= 0.20:
-		return 1
-	return 0
+	return ShopDB.rod_tier(_rod_id())
 
 
+## Reel power for the tug-of-war; the timing sweep stays constant so the
+## wider green is the actual upgrade.
 func _rod_reel_speed() -> float:
-	return maxf(0.6, float(ShopDB.item("rods", String(GameState.gear.get("rod", "rod_stick"))).get("reel_speed", 1.0)))
+	return maxf(0.6, float(ShopDB.item("rods", _rod_id()).get("reel_speed", 1.0)))
 
 
-## Half-width of the green target. High-tier rods get a *smaller* target
-## (the upgrade is speed, not an easier click), shrinking to 38% of the
-## Twig Rod's window. Rarer fish tighten it a little further.
+## Half-width of the timing green. 40% of the bar on the Twig Rod, plus
+## 4 percentage points for every rod tier: 40 / 44 / 48 / 52 / 56%.
 func _green_half() -> float:
-	var tier_t := float(_rod_tier_rank()) / 4.0
-	return TIMING_ACCEPT * 0.18 * lerpf(1.0, 0.38, tier_t) * _fight_scale()
+	return float(ShopDB.rod_green_percent(_rod_id())) / 200.0
 
 
-## Low-tier rods always keep the target in the middle (easy to learn).
-## Bamboo and above start somewhere random and move on every bounce.
+## Pick the green's position once per fish. It does not move again while
+## that fish is being reeled in.
 func _first_timing_center() -> float:
-	if _rod_tier_rank() < 2:
-		return 0.5
 	return _random_timing_center(0.5)
-
-
-func _shift_timing_center() -> void:
-	if _rod_tier_rank() < 2:
-		return
-	timing_center = _random_timing_center(timing_center)
-	timing_shifts += 1
 
 
 func _random_timing_center(previous: float) -> float:
 	var half := _green_half()
-	var lo := 0.10 + half
-	var hi := 0.90 - half
+	var lo := half + 0.01
+	var hi := 1.0 - half - 0.01
 	if hi <= lo:
 		return 0.5
 	var best := previous
-	# at least ~0.14 away from the last spot, so a held click misses
 	for i in range(8):
 		best = randf_range(lo, hi)
-		if absf(best - previous) >= 0.14:
+		if absf(best - previous) >= 0.10:
 			break
 	return best
-
-
-## Kept for the shop stat line: the old "window" number is now the
-## precision rating (smaller = tighter target).
-func _timing_window() -> float:
-	return _green_half()
 
 
 ## 1.0 for common fish, a touch tighter for the rare ones.
@@ -1492,12 +1484,26 @@ func _fight_scale() -> float:
 		_: return 1.0
 
 
-## Big-fish tug-of-war: holding reels in and raises tension, releasing
+## Tug-of-war minigame: holding reels in and raises tension, releasing
 ## lets it fall. Keep the marker in the green band long enough to land the
 ## fish. The line only snaps after it has been fully slack or fully
 ## strained for TUG_PEG seconds straight, so one clumsy pause is
 ## survivable - the old build failed within half a second no matter what.
 func _update_tug(dt: float) -> void:
+	var band := _tug_band()
+	# The green drifts slowly across the bar. Follow it with the tension
+	# marker; it reverses at the edges instead of wrapping.
+	tug_center += tug_dir * TUG_GREEN_SPEED * dt
+	var center_lo := band + 0.03
+	var center_hi := 1.0 - band - 0.03
+	if center_hi <= center_lo:
+		tug_center = 0.5
+	elif tug_center < center_lo:
+		tug_center = center_lo
+		tug_dir = 1.0
+	elif tug_center > center_hi:
+		tug_center = center_hi
+		tug_dir = -1.0
 	# A click is a short pump rather than one frame of holding, so tapping
 	# in the green reels the fish in just like holding the button does.
 	var tapped := _pressed()
@@ -1515,15 +1521,18 @@ func _update_tug(dt: float) -> void:
 			return
 	else:
 		tug_peg_time = 0.0
-	if absf(reel_tension - 0.5) < _tug_band():
-		tug_ok_time += dt
+	if absf(reel_tension - tug_center) < band:
+		# Better rods pull the fish in a little faster once you are in the
+		# green; the wider band above is the bigger part of the upgrade.
+		var reel_power := 1.0 + (_rod_reel_speed() - 1.0) * 0.15
+		tug_ok_time += dt * reel_power
 		if tapped:
 			tug_ok_time += TUG_TAP_PROGRESS
 	else:
 		# a short misstep only slows the landing, it does not reset it
 		tug_ok_time = maxf(0.0, tug_ok_time - dt * 0.5)
 	if tug_ok_time >= TUG_HOLD:
-		var perfect := absf(reel_tension - 0.5) < _tug_band() * 0.3
+		var perfect := absf(reel_tension - tug_center) < band * 0.3
 		_complete_catch(true, perfect)
 
 
@@ -1535,11 +1544,13 @@ func _reel_held() -> bool:
 	return Input.is_action_pressed("click") and not _click_blocked()
 
 
-## Safe tension band around the middle; better lines widen it (the line's
-## ShopDB escape_chance), so the upgrade finally matters in the fight.
+## Safe tension band. It starts at 44% of the bar, gains 2 half-width
+## points (4% total width) per rod tier, and better lines widen it a little
+## more. This is the width of the moving green on the tug bar.
 func _tug_band() -> float:
 	var line := ShopDB.item("lines", String(GameState.gear.get("line", "line_nylon")))
-	return (TUG_BAND + (0.3 - float(line.get("escape_chance", 0.3))) * 0.5) * _fight_scale()
+	var line_bonus := (0.3 - float(line.get("escape_chance", 0.3))) * 0.2
+	return clampf(TUG_BAND + float(_rod_tier_rank()) * 0.02 + line_bonus, TUG_BAND, 0.45)
 
 
 func _complete_catch(success: bool, perfect := false) -> void:
@@ -2760,17 +2771,9 @@ func _is_equipped(category: String, id: String) -> bool:
 func _stat_line(category: String, d: Dictionary) -> String:
 	match category:
 		"rods":
-			var tw := float(d.get("timing_window", 0.18))
-			var tier := 0
-			if tw >= 0.40:
-				tier = 4
-			elif tw >= 0.34:
-				tier = 3
-			elif tw >= 0.26:
-				tier = 2
-			elif tw >= 0.20:
-				tier = 1
-			return "REEL: %.1fx  PRECISION: %d/4" % [float(d.get("reel_speed", 1.0)), tier]
+			var rod_id := String(d.get("id", ""))
+			return "REEL: %.1fx  GREEN: %d%%" % [float(d.get("reel_speed", 1.0)),
+					ShopDB.rod_green_percent(rod_id)]
 		"lines": return "KEEP: %.0f%%" % [(1.0 - float(d.get("escape_chance", 0.3))) * 100.0]
 		"baits":
 			var bait_id := String(d.get("id", ""))
@@ -3992,11 +3995,11 @@ func _draw_reel_meter() -> void:
 	var bar_w := w - 32.0
 	var bar_y := y + 22.0
 	_pixel_rect(Rect2(bar_x, bar_y, bar_w, 12.0), Color("#22314a"))
-	if _is_big_fish():
+	if _is_tug_fight():
 		var band := _tug_band()
-		_pixel_rect(Rect2(bar_x + bar_w * (0.5 - band), bar_y, bar_w * band * 2.0, 12.0), GameTheme.LEAF)
+		_pixel_rect(Rect2(bar_x + bar_w * (tug_center - band), bar_y, bar_w * band * 2.0, 12.0), GameTheme.LEAF)
 		_pixel_rect(Rect2(bar_x + bar_w * reel_tension - 2.0, bar_y - 5.0, 4.0, 22.0), GameTheme.CREAM)
-		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), "HOLD TO REEL - KEEP IT GREEN",
+		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), "HOLD TO REEL - FOLLOW THE GREEN",
 				Color("#cfe0ec"), Color("#050a12", 0.6), 2, 1, 1)
 	else:
 		var good := _green_half()
@@ -4004,9 +4007,7 @@ func _draw_reel_meter() -> void:
 				GameTheme.LEAF)
 		_pixel_rect(Rect2(bar_x + bar_w * timing_center - 1.5, bar_y, 3.0, 12.0), GameTheme.GOLD)
 		_pixel_rect(Rect2(bar_x + bar_w * reel_pos - 2.0, bar_y - 5.0, 4.0, 22.0), GameTheme.CREAM)
-		var hint := "HIT THE GREEN - PERFECT BONUS"
-		if _rod_tier_rank() >= 2:
-			hint = "THE GREEN MOVES - HIT IT"
+		var hint := "HIT THE GREEN - SET ONCE PER FISH"
 		PixFont.draw_text_shadowed(self, Vector2(bar_x, y + 6.0), hint,
 				Color("#cfe0ec"), Color("#050a12", 0.6), 2, 1, 1)
 

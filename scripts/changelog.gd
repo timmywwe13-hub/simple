@@ -6,9 +6,19 @@ extends RefCounted
 ## list. Bump VERSION and add a new entry on every release; the menu shows
 ## a "!" badge until the player opens the screen once (GameState.seen_version).
 
-const VERSION := "1.8"
+const VERSION := "1.8.1"
 
 const ENTRIES := [
+	{
+		"version": "1.8.1",
+		"title": "A FAIRER GREEN",
+		"items": [
+			"MINIGAME PICK - every hooked fish now rolls 50/50 between the timing bar and the tug-of-war, no matter the species or rarity, so both minigames stay in rotation.",
+			"TIMING GREEN - the timing green now picks one spot when the fish is hooked and stays there for that fish; it no longer jumps every pass. It covers 40% of the bar, and every rod tier widens it by another 4% (40 / 44 / 48 / 52 / 56%), so a normal reaction can hit it.",
+			"TUG-OF-WAR GREEN - the tug band starts at 44% wide, but it drifts slowly across the bar, so follow it with the tension marker instead of holding one spot. Better rods and lines widen it further.",
+			"SHOP CLARITY - rod cards now show GREEN % instead of the old precision number, and the rod descriptions explain the +4% window per tier.",
+		],
+	},
 	{
 		"version": "1.8",
 		"title": "ALL IN AT THE LUCKY LILY",

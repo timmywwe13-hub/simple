@@ -3,17 +3,20 @@ extends RefCounted
 
 ## Shop / upgrade data. All static.
 
+const GREEN_BASE_PERCENT := 40
+const GREEN_STEP_PERCENT := 4
+
 static var RODS := {
 	"rod_stick": {"id": "rod_stick", "name": "Twig Rod", "cost": 0,
-		"reel_speed": 1.0, "timing_window": 0.18, "desc": "A bent stick. Slow reeling.", "owned": true},
+		"reel_speed": 1.0, "timing_window": 0.18, "desc": "A bent stick. Slow reeling, 40% green window.", "owned": true},
 	"rod_wood": {"id": "rod_wood", "name": "Willow Rod", "cost": 150,
-		"reel_speed": 1.4, "timing_window": 0.22, "desc": "Smoother flex and a faster reel, but a tighter target.", "owned": false},
+		"reel_speed": 1.4, "timing_window": 0.22, "desc": "Faster reel and a 4% wider green window.", "owned": false},
 	"rod_bamboo": {"id": "rod_bamboo", "name": "Bamboo Rod", "cost": 500,
-		"reel_speed": 1.9, "timing_window": 0.28, "desc": "Quick reel and a small target that shifts each pass.", "owned": false},
+		"reel_speed": 1.9, "timing_window": 0.28, "desc": "Quick reel and an 8% wider green window.", "owned": false},
 	"rod_fiber": {"id": "rod_fiber", "name": "Reed Rod", "cost": 1200,
-		"reel_speed": 2.5, "timing_window": 0.36, "desc": "Very fast reel. The green target moves every pass.", "owned": false},
+		"reel_speed": 2.5, "timing_window": 0.36, "desc": "Very fast reel and a 12% wider green window.", "owned": false},
 	"rod_carbon": {"id": "rod_carbon", "name": "Carbon Rod", "cost": 2600,
-		"reel_speed": 3.2, "timing_window": 0.42, "desc": "Tournament blank: fastest reel, smallest moving target.", "owned": false},
+		"reel_speed": 3.2, "timing_window": 0.42, "desc": "Tournament blank: fastest reel and a 16% wider green window.", "owned": false},
 }
 
 ## Island-crafted rods: exactly 25% better than the shop rod they are
@@ -110,6 +113,27 @@ static var BOATS := {
 	"boat_trawler": {"id": "boat_trawler", "name": "Sea Trawler", "cost": 2200,
 		"speed": 215.0, "value_mult": 1.20, "desc": "Deep-sea ready. Fish fetch 20% more.", "owned": false},
 }
+
+## Rod tier from the hidden timing_window marker: 0 = Twig, 4 = Carbon.
+## Crafted rod timings map through these same thresholds.
+static func rod_tier(rod_id: String) -> int:
+	var tw := float(item("rods", rod_id).get("timing_window", 0.18))
+	if tw >= 0.40:
+		return 4
+	if tw >= 0.34:
+		return 3
+	if tw >= 0.26:
+		return 2
+	if tw >= 0.20:
+		return 1
+	return 0
+
+
+## Total width of the timing green as a percentage of the bar. Every shop
+## rod adds 4 points; crafted rods sit one tier above their base rod.
+static func rod_green_percent(rod_id: String) -> int:
+	return GREEN_BASE_PERCENT + GREEN_STEP_PERCENT * rod_tier(rod_id)
+
 
 static func category(category: String) -> Dictionary:
 	return _db(category)

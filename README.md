@@ -57,10 +57,10 @@ device.
 
 1. **Cast** — aim with the mouse, press `SPACE`/click to cast the bobber.
 2. **Wait for a bite** — a `!` indicator flashes over the bobber with a bite sound. Click quickly to hook.
-3. **Reel** — small fish: timing bar (press in the green zone; the gold centre is a perfect catch for +15%). Big fish: physics tug-of-war (hold `SPACE` to reel in and keep the tension marker in the green band).
+3. **Reel** — each hooked fish rolls 50/50 between two minigames. Timing bar: the green is set once when the fish is hooked, covers 40% of the bar and gets 4% wider per rod tier (the gold centre is a perfect catch for +15%). Tug-of-war: hold `SPACE` to reel in and keep the tension marker inside the slowly drifting green band.
 4. **Catch popup** — fish name, weight, rarity, coin value, plus a `NEW SPECIES!` badge on first catch and tags for perfect / daily / hot-demand bonuses.
 5. **Sell / Index** — open the Fish Index (`I`, also mid-fishing: collection log with silhouettes until caught, plus region and uncaught filters) or the Tackle Shop (sell all fish for coins).
-6. **Upgrade** — buy better rods (faster reeling, but the green target shrinks and starts moving each pass), lines (fewer escapes), bait (attracts rarer fish), lanterns (faster night bites), and bigger buckets (more inventory).
+6. **Upgrade** — buy better rods (faster tug reeling and a 4% wider green window), lines (fewer escapes), bait (attracts rarer fish), lanterns (faster night bites), and bigger buckets (more inventory).
 7. **Progress** — unlock the River, Lake, and Deep Sea regions by coins; each has its own fish table. Day/night, weather, daily catches and daily market demand change which fish are worth chasing.
 8. **Coconut Isle** — sail east from the Deep Sea to a tropical beach. Buy the axe in the shop, chop the palms for coconuts (each palm regrows in 20 minutes, with a timer over the stump), then spend the coconuts in **Coconut Isle Crafting** to build rods 25% better than every shop rod. The isle's own fish only bite with bait.
 9. **The Lucky Lily** — walk to the toy-coin riverboat in Town and press `E`. Pick a stake from 10 to 500 coins, then call **Skipper's Coin**, pick a **Pearl Shell**, or spin the **Lucky Catch** reel. Every payout includes the returned stake; the ledger tracks your session and lifetime results.
@@ -107,6 +107,13 @@ res://scripts/touch_controls.gd # On-screen touch controls for phones/tablets
 res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 ```
 
+## Updates (v1.8.1)
+
+- **50/50 minigame pick** - every hooked fish now rolls between the timing bar and the tug-of-war, regardless of species or rarity
+- **Fairer timing green** - the target now picks one spot per fish instead of jumping every pass, covers 40% of the bar, and each rod tier makes it 4% wider (40 / 44 / 48 / 52 / 56%)
+- **Moving tug green** - the tug band starts at 44% width and drifts slowly across the bar, so follow it with the tension marker. Better rods and lines widen it
+- **Rod shop stats** - rod cards now show `GREEN %` instead of the old precision number
+
 ## Updates (v1.8)
 
 - **The Lucky Lily** - a toy-coin riverboat in Town with three games: Skipper's Coin (48% pays 2X), Pearl Shells (30% pays 3X) and the 12-stop Lucky Catch reel (5% jackpot at 5X). Stakes of 10, 25, 50, 100, 250 or 500 coins, a persistent selected stake, short reveals that can be skipped with Reduce Motion, and a ledger for session and lifetime wagered/returned/net/biggest win
@@ -141,7 +148,7 @@ res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 
 - **6 new fish (48 species total)** - Sunrise Bream and Dawn Gar bite only by day, Moonfin Eel and Ghost Carp only at night, and Mist Herring / Thunderhead Grouper only in rain or storms. Fish pools now filter by hour as well as weather
 - **Lantern gear** - No Lantern, Oil Lamp and Storm Lantern; better lanterns speed up night bites and make rare night fish more likely. Equipped lanterns cast a warm light around the fisher after dark
-- **New gear tiers** - Carbon Rod (3.2x reel, 0.42 window), Fluorocarbon Line (94% keep) and Deck Cooler (72 fish)
+- **New gear tiers** - Carbon Rod (3.2x reel, 56% green), Fluorocarbon Line (94% keep) and Deck Cooler (72 fish)
 - **Moon Bait and Storm Bait** - Moon Bait boosts night rarity odds; Storm Bait boosts fish in rain and thunderstorms
 - **Perfect catches** - hit the gold centre of the timing bar for a 15% value bonus (the tug-of-war can earn one too)
 - **Catch streaks** - land fish back to back for up to +20% sale value; an escape or monster shock resets the streak

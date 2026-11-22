@@ -92,8 +92,8 @@ func _craft_rows(body: VBoxContainer) -> void:
 		var text := "EQUIPPED" if equipped else ("EQUIP" if owned else "CRAFT %d" % int(d.get("cost", 4)))
 		_craft_row(body, String(d.get("name", id)),
 				"%s - %d COCONUTS" % [String(d.get("desc", "")), int(d.get("cost", 4))],
-				"SPEED %.2fx  WIN %.3f" % [float(d.get("reel_speed", 1.0)),
-						float(d.get("timing_window", 0.2))],
+				"SPEED %.2fx  GREEN %d%%" % [float(d.get("reel_speed", 1.0)),
+						ShopDB.rod_green_percent(rod_id)],
 				text, _on_craft.bind(rod_id))
 
 
@@ -153,7 +153,10 @@ func _region_passes(body: VBoxContainer) -> void:
 
 func _stat_line(category: String, d: Dictionary) -> String:
 	match category:
-		"rods": return "SPEED: %.1fx  WINDOW: %.2f" % [float(d.get("reel_speed", 1.0)), float(d.get("timing_window", 0.2))]
+		"rods":
+			var rod_id := String(d.get("id", ""))
+			return "SPEED: %.1fx  GREEN: %d%%" % [float(d.get("reel_speed", 1.0)),
+					ShopDB.rod_green_percent(rod_id)]
 		"lines": return "KEEP: %.0f%%" % [(1.0 - float(d.get("escape_chance", 0.3))) * 100.0]
 		"baits":
 			var bait_id := String(d.get("id", ""))
