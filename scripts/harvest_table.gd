@@ -390,7 +390,9 @@ class Board extends Control:
 		_lab(content, "DONATED %d FISH" % int(GameState.harvest.get("donated", 0)), 14,
 				UILib.SUBTEXT, Vector2(520.0, 32.0), 300.0)
 		var next := GameState.harvest_next_stage_donation()
-		var stage_txt := "FULL FEAST" if next < 0 else "NEXT STAGE AT %d DONATIONS" % next
+		var stage_txt := "NEXT STAGE AT %d DONATIONS" % next
+		if next < 0:
+			stage_txt = "FULL FEAST - DONATIONS STILL PAY TOKENS"
 		_lab(content, stage_txt, 13, UILib.WHEAT, Vector2(520.0, 50.0), 320.0)
 		_bar(content, Vector2(0.0, 66.0), Vector2(820.0, 18.0),
 				int(GameState.harvest.get("donated", 0)),
@@ -450,8 +452,10 @@ class Board extends Control:
 	func _build_donate() -> void:
 		var closed := not GameState.harvest_season_open()
 		_lab(content, "DONATE A FISH TO THE LONG TABLE", 22, UILib.CREAM, Vector2(0.0, 0.0))
-		_lab(content, "Every donation pays tokens and grows the table. Stage 4 hands out a bonus pack.",
-				13, UILib.SUBTEXT, Vector2(0.0, 30.0), 820.0)
+		var hint := "Every donation pays tokens and grows the table. Stage 4 hands out a bonus pack and %d tokens." % GameState.HARVEST_TABLE_BONUS
+		if GameState.harvest_table_stage() >= 4:
+			hint = "THE TABLE IS FULL - DONATIONS STILL PAY TOKENS, SO THE ALBUM IS NEVER STRANDED."
+		_lab(content, hint, 13, UILib.SUBTEXT, Vector2(0.0, 30.0), 820.0)
 		donate_list = ItemList.new()
 		donate_list.position = Vector2(0.0, 58.0)
 		donate_list.size = Vector2(500.0, 210.0)
@@ -465,8 +469,7 @@ class Board extends Control:
 			for i in range(GameState.inventory.size()):
 				var item: Dictionary = GameState.inventory[i]
 				var fid := String(item.get("fish_id", ""))
-				var value := GameState.coin_value(fid, float(item.get("weight", 0.0)))
-				var tok := clampi(int(round(float(value) * 0.12)), 2, 18)
+				var tok := GameState.harvest_donation_tokens(fid, float(item.get("weight", 0.0)))
 				donate_list.add_item("%s  %.2f KG  -  %d TOKENS" % [
 						String(FishDB.fish_data(fid).get("name", fid)),
 						float(item.get("weight", 0.0)), tok])
@@ -500,9 +503,14 @@ class Board extends Control:
 			return
 		status_text = "DONATED FOR %d TOKENS - TABLE STAGE %d" % [int(res.get("tokens", 0)),
 				int(res.get("stage", 0))]
+		if int(res.get("table_bonus", 0)) > 0:
+			status_text += "  +%d FOR THE FULL TABLE" % int(res.get("table_bonus", 0))
 		GameState.play_sound("bell")
 		if bool(res.get("bonus_pack", false)):
 			var pack := GameState.harvest_open_pack(0)
+			# Surface the completion payout on the pack reveal instead of
+			# leaving it as a silent wallet change behind the overlay.
+			pack["table_bonus"] = int(res.get("table_bonus", 0))
 			tab = "feast"
 			_build()
 			_open_reveal(pack)
@@ -631,7 +639,7 @@ class Board extends Control:
 			HarvestCards.draw_trophy(art, Rect2(Vector2.ZERO, art.size))
 		)
 		_lab(content, "THE HARVEST QUEEN", 24, UILib.GOLD, Vector2(0.0, 276.0), 820.0)
-		_lab(content, "Awarded automatically at 20 / 20 cards. Exactly the Sea Trawler's stats: speed 215, value +20%. Saved as a normal owned boat, so she is sailable from any dock.",
+		_lab(content, "Awarded automatically at 20 / 20 cards. The best hull in the creek: speed 260, value +45%, open-water rare bites +35%. Saved as a normal owned boat, so she is sailable from any dock.",
 				14, UILib.SUBTEXT, Vector2(0.0, 306.0), 820.0)
 
 	func _open_reveal(res: Dictionary) -> void:
@@ -703,9 +711,14 @@ class Board extends Control:
 			else:
 				o.draw_rect(r, UILib.PAPER)
 		if reveal_t >= 1.0:
-			var line := "CLICK TO CONTINUE"
+			var gains: Array[String] = []
+			if int(reveal.get("table_bonus", 0)) > 0:
+				gains.append("+%d TOKENS FOR THE FULL TABLE" % int(reveal.get("table_bonus", 0)))
 			if int(reveal.get("refund", 0)) > 0:
-				line = "+%d TOKENS FROM SPARES   -   CLICK TO CONTINUE" % int(reveal.get("refund", 0))
+				gains.append("+%d TOKENS FROM SPARES" % int(reveal.get("refund", 0)))
+			var line := "CLICK TO CONTINUE"
+			if not gains.is_empty():
+				line = "   -   ".join(PackedStringArray(gains)) + "   -   CLICK TO CONTINUE"
 			PixFont.draw_text_centered(o, CARD_W * 0.5, CARD_H - 54.0, line, UILib.CREAM, 2, 1)
 		if bool(reveal.get("completed", false)):
 			PixFont.draw_text_centered(o, CARD_W * 0.5, CARD_H - 84.0,
@@ -744,7 +757,7 @@ class Board extends Control:
 			PixFont.draw_text_centered(award_overlay, CARD_W * 0.5, 362.0,
 					"THE HARVEST QUEEN JOINS YOUR FLEET", UILib.CREAM, 2, 1)
 			PixFont.draw_text_centered(award_overlay, CARD_W * 0.5, 388.0,
-					"SPEED 215   VALUE +20%   SAILABLE FROM ANY DOCK", UILib.WHEAT, 2, 1)
+					"SPEED 260   VALUE +45%   OPEN-WATER RARE +35%", UILib.WHEAT, 2, 1)
 		)
 		GameState.play_sound("fanfare")
 

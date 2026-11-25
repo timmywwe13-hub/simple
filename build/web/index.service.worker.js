@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1795384341|12278434|ccf-7950d53bd638';
+const CACHE_VERSION = '1795623781|5795768|ccf-fbd4fc7031f2';
 /** @type {string} */
 const CACHE_PREFIX = 'Cottage Creek Fi-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;

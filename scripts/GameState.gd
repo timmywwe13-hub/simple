@@ -93,6 +93,8 @@ const HARVEST_DEFAULTS := {
 }
 const HARVEST_TABLE_STAGES := [3, 8, 15, 25]
 const HARVEST_PACK_COST := 20
+## One-time token payout that lands with the table-completion pack.
+const HARVEST_TABLE_BONUS := 60
 const HARVEST_TOKEN_DAY_CAP := 120
 var harvest: Dictionary = HARVEST_DEFAULTS.duplicate(true)
 ## Dev override wired to the 2222 cheat so the event can be tested off-season.
@@ -1057,8 +1059,9 @@ func harvest_spend_tokens(amount: int) -> bool:
 		request_save()
 	return true
 
-## Add event tokens. Normal earnings stop at the ~120/day soft cap; dupe
-## refunds pass `bypass_cap` so the album economy always pays out.
+## Add event tokens. Quest earnings stop at the ~120/day soft cap; table
+## donations and dupe refunds pass `bypass_cap` so the Feast's pack faucet
+## can never run dry and the album economy always pays out.
 func add_tokens(amount: int, bypass_cap := false) -> int:
 	if amount <= 0:
 		return 0
@@ -1117,10 +1120,24 @@ func harvest_next_stage_donation() -> int:
 		return -1
 	return int(HARVEST_TABLE_STAGES[stage])
 
+## Tokens one donation pays: 12% of the fish's coin value, clamped to 2..18,
+## with a 50% bump for seasonal fish. Shared by the donate list preview and
+## donate_fish so the board never promises a different number than it pays.
+func harvest_donation_tokens(fish_id: String, weight: float) -> int:
+	var value := coin_value(fish_id, weight)
+	var tok := clampi(int(round(float(value) * 0.12)), 2, 18)
+	if String(FishDB.fish_data(fish_id).get("season", "")) == "harvest":
+		tok = int(round(float(tok) * 1.5))
+	return maxi(1, tok)
+
+
 ## Donate one fish from the bucket to the town table. Pays tokens scaled to
 ## the fish value, grows the table and hands out the completion bonus pack.
+## Donations are never capped: once the table is full they keep paying, so
+## finishing the table can't leave the album with no way to buy a pack.
 func donate_fish(inv_index: int) -> Dictionary:
-	var out := {"ok": false, "tokens": 0, "stage": 0, "bonus_pack": false, "reason": ""}
+	var out := {"ok": false, "tokens": 0, "stage": 0, "bonus_pack": false,
+			"table_bonus": 0, "reason": ""}
 	if not harvest_season_open():
 		out["reason"] = "closed"
 		return out
@@ -1129,22 +1146,24 @@ func donate_fish(inv_index: int) -> Dictionary:
 		return out
 	var item: Dictionary = inventory[inv_index]
 	var fid := String(item.get("fish_id", ""))
-	var value := coin_value(fid, float(item.get("weight", 0.0)))
-	var tok := clampi(int(round(float(value) * 0.12)), 2, 18)
-	if String(FishDB.fish_data(fid).get("season", "")) == "harvest":
-		tok = int(round(float(tok) * 1.5))
+	var tok := harvest_donation_tokens(fid, float(item.get("weight", 0.0)))
 	inventory.remove_at(inv_index)
 	harvest["donated"] = int(harvest.get("donated", 0)) + 1
 	harvest["grateful_seen"] = true
-	var old_stage := harvest_table_stage()
-	var granted := add_tokens(tok)
+	# Bypass the daily soft cap: the table is the Feast's only reliable pack
+	# faucet, so maxing it must never stop donations from paying.
+	var granted := add_tokens(tok, true)
 	var new_stage := harvest_table_stage()
 	out["tokens"] = granted
 	out["stage"] = new_stage
 	out["ok"] = true
-	if new_stage >= 4 and old_stage < 4 and not bool(harvest.get("table_rewarded", false)):
+	# Pay out once when the table reaches stage 4. The old check compared
+	# the stage with itself, so the completion pack never fired; testing the
+	# saved flag also repairs saves that maxed the table without a reward.
+	if new_stage >= 4 and not bool(harvest.get("table_rewarded", false)):
 		harvest["table_rewarded"] = true
 		out["bonus_pack"] = true
+		out["table_bonus"] = add_tokens(HARVEST_TABLE_BONUS, true)
 	_check_quests("donate", "", {"coins": tok})
 	play_sound("bell")
 	if AUTO_SAVE:

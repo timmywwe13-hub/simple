@@ -6,9 +6,18 @@ extends RefCounted
 ## list. Bump VERSION and add a new entry on every release; the menu shows
 ## a "!" badge until the player opens the screen once (GameState.seen_version).
 
-const VERSION := "1.9.1"
+const VERSION := "1.9.2"
 
 const ENTRIES := [
+	{
+		"version": "1.9.2",
+		"title": "A FULL TABLE KEEPS PAYING",
+		"items": [
+			"TABLE TOKENS FIXED - donations stopped paying once the 120-token daily cap was reached, so maxing the 25-donation table could leave the album with no way to buy another pack. Donations now always pay their full token value, before and after the table is complete.",
+			"THE COMPLETION REWARD NOW LANDS - the stage-4 check compared the new stage with itself, so the bonus pack never fired. Reaching FULL FEAST now pays one free pack plus 60 tokens, and a table that was already full pays that bonus on the next donation.",
+			"HONEST DONATE NUMBERS - the donate list uses the same formula as the payout (including the +50% seasonal-fish bump), the board says the full table still pays, and the completion payout is shown on the pack reveal instead of silently changing the wallet.",
+		],
+	},
 	{
 		"version": "1.9.1",
 		"title": "THE QUEEN'S WAKE",

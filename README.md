@@ -114,6 +114,12 @@ res://scripts/touch_controls.gd # On-screen touch controls for phones/tablets
 res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 ```
 
+## Updates (v1.9.2)
+
+- **The table keeps paying** - donations no longer stop at the 120-token daily soft cap, so maxing the table can't leave the album without a way to buy packs
+- **The completion reward now actually triggers** - the stage-4 check compared the new stage against itself, so it never fired; reaching FULL FEAST now hands out its bonus pack plus **60 tokens**, and a table that was already full pays that bonus on the next donation
+- **Clearer donate tab** - the listed token value matches what a donation pays (seasonal fish included), the board says a full table still pays, and the completion payout appears on the pack reveal
+
 ## Updates (v1.9.1)
 
 - **The Harvest Queen, upgraded** - the event hull is now the best boat in the creek: **speed 260**, **fish value +45%**, and **open-water rare/epic/legendary fish bite 35% more often**. She wears a striped festival canopy, twin lanterns, a pumpkin prow and a trail of golden leaves
