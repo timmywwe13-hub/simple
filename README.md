@@ -2,8 +2,9 @@
 
 A simple, polished 2D fishing game with a collection-and-progression loop, built in **Godot 4.7** (GDScript, Canvas 2D rendering, no external assets).
 
-**Play in your browser:** https://cottage-creek-fishing.surge.sh/ · https://cottage-creek.surge.sh/ · https://cottagecreek.surge.sh/ · https://creekfishing.surge.sh/
-**GitHub Pages mirror:** https://timmywwe13-hub.github.io/simple/build/web/
+**Play in your browser:** [cottage-creek-fishing.surge.sh](https://cottage-creek-fishing.surge.sh/) · [cottage-creek.surge.sh](https://cottage-creek.surge.sh/) · [cottagecreek.surge.sh](https://cottagecreek.surge.sh/) · [creekfishing.surge.sh](https://creekfishing.surge.sh/)
+**GitHub Pages mirror:** [timmywwe13-hub.github.io/simple/build/web](https://timmywwe13-hub.github.io/simple/build/web/)
+**Seeing an old cached build?** Open [reset.html](https://cottage-creek-fishing.surge.sh/reset.html) once, then reload the game.
 
 ## How to run
 
