@@ -41,3 +41,14 @@ Build: Godot 4.7.2 Web export. Version `1.10` / `THE ANGLER ALMANAC`.
 - Tests were run headless against the exported build served from `http://127.0.0.1:8123`.
 - The 8-minute wait was verified from the live countdown; the ready/collect/full-bucket branches were exercised by the deterministic smoke harness rather than by waiting eight real minutes.
 - The temporary smoke harness and its fixtures were removed after the run so they cannot leak into `index.pck`.
+## Live v1.10 endpoints
+
+All four return HTTP 200, the same `index.pck` (2,090,964 bytes / `D64D4FCDA8750175D0724F57E611488FEC143423A65BED7165D21DC608573B34`), the same cache tag `ccf-d0e309784f3e`, and a working `/reset.html`:
+
+- <https://cottage-creek-fishing-v110.surge.sh>
+- <https://cottage-creek-v110.surge.sh>
+- <https://cottagecreek-v110.surge.sh>
+- <https://creekfishing-v110.surge.sh>
+- GitHub Pages mirror: <https://timmywwe13-hub.github.io/simple/build/web/>
+
+The four originally named domains (`cottage-creek-fishing.surge.sh`, `cottage-creek.surge.sh`, `cottagecreek.surge.sh`, `creekfishing.surge.sh`) are owned by a different Surge account. Publishing returns 403, so they still serve the v1.9.2 PCK (`1E558681CCEE1120246DB63B86367DDFF5A35C2E21D04FCA761C51C668E08A76`). They need the owning account's token to receive this build.
