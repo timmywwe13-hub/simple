@@ -2,6 +2,7 @@ extends Node
 
 const CasinoDBLib := preload("res://scripts/casino_db.gd")
 const HarvestCardsLib := preload("res://scripts/harvest_cards.gd")
+const AlmanacLib := preload("res://scripts/almanac_db.gd")
 
 ## Persistent game state: coins, inventory, fish index, gear, quests.
 ## Saved to user://save.json via FileAccess store_var/get_var.
@@ -26,7 +27,7 @@ var stats := {
 	"current_streak": 0, "best_streak": 0, "daily_catches": 0,
 	"biggest_fish": 0.0, "biggest_name": "", "days_fished": 0,
 	"casino_wagered": 0, "casino_returned": 0, "casino_wins": 0,
-	"casino_biggest_win": 0,
+	"casino_biggest_win": 0, "lines_set": 0,
 }
 var muted := false
 ## The version whose What's New screen has been read (shown once with a
@@ -49,6 +50,21 @@ const PALM_IDS := ["palm_0", "palm_1", "palm_2", "palm_3"]
 ## Used so returning from the Town resumes the fishing scene instead of
 ## showing the start screen again. Not saved - a fresh boot shows the menu.
 var session_started := false
+
+## --- Angler's Almanac (v1.10) ---------------------------------------
+## Mastery stores only the highest rank already paid per species; the rank
+## shown anywhere is always derived from the index catch count. The daily
+## board and set lines are additive save keys (old saves merge them).
+var mastery := {}
+const DAILY_DEFAULTS := {"day": 0, "ids": [], "progress": {}, "claimed": [],
+	"streak": 0, "last_complete_day": 0}
+var daily: Dictionary = DAILY_DEFAULTS.duplicate(true)
+var trotline_tier := 0
+var set_lines := {}
+const SET_LINE_SECONDS := 8 * 60
+## Filled by _check_mastery for the catch card tag / rank-up toast.
+var last_mastery_rank := 0
+var last_mastery_coins := 0
 
 var audio_player: AudioStreamPlayer
 var sfx_cache := {}
@@ -118,6 +134,8 @@ var _saved_toast_cd := 0.0
 signal saved
 signal coins_gained(amount: int)
 signal harvest_boat_awarded
+signal mastery_ranked(fish_id: String, rank: int)
+signal daily_completed(streak: int)
 
 ## --- Audio director (v1.7) ------------------------------------------
 ## Two music players crossfade between procedurally baked loops, one per
@@ -195,7 +213,7 @@ const QUEST_DEFS := [
 		"kind": "sell_count", "target": 30, "need": 30, "reward": 260},
 	{"id": "night_angler", "title": "After Dark", "desc": "Catch 3 fish at night.",
 		"kind": "catch_night", "target": 3, "need": 3, "reward": 140},
-	{"id": "storm_chaser", "title": "Storm Chaser", "desc": "Catch 2 fish in rain or a storm.",
+	{"id": "storm_chaser", "title": "Rain Chaser", "desc": "Catch 2 fish in rain or a storm.",
 		"kind": "catch_weather", "target": "bad", "need": 2, "reward": 180},
 	{"id": "perfect_angler", "title": "Dead Center", "desc": "Land 5 perfect catches.",
 		"kind": "perfect_catch", "target": 5, "need": 5, "reward": 200},
@@ -218,6 +236,23 @@ const QUEST_DEFS := [
 	{"id": "grand_tom", "title": "The Grand Tom", "desc": "Catch The Grand Tom by night.",
 		"kind": "catch_species", "target": "grand_tom", "need": 1, "reward": 200,
 		"token_reward": true, "season": "harvest"},
+	# --- Angler's Almanac (v1.10) ---
+	{"id": "a_line_in_water", "title": "A Line in the Water", "desc": "Set a line at any fishing spot.",
+		"kind": "line_set", "target": 1, "need": 1, "reward": 60},
+	{"id": "something_on_the_line", "title": "Something on the Line", "desc": "Collect a fish from a set line.",
+		"kind": "line_collect", "target": 1, "need": 1, "reward": 120},
+	{"id": "bronze_angler", "title": "Bronze Angler", "desc": "Reach Bronze mastery with 12 species.",
+		"kind": "mastery_rank", "target": 1, "need": 12, "reward": 150},
+	{"id": "silver_service", "title": "Silver Service", "desc": "Reach Silver mastery with 5 species.",
+		"kind": "mastery_rank", "target": 2, "need": 5, "reward": 220},
+	{"id": "gold_standard", "title": "The Gold Standard", "desc": "Reach Gold mastery with any species.",
+		"kind": "mastery_rank", "target": 3, "need": 1, "reward": 300},
+	{"id": "habit_formed", "title": "Habit Formed", "desc": "Reach a 3-day daily challenge streak.",
+		"kind": "daily_streak", "target": 3, "need": 3, "reward": 200},
+	{"id": "moonlit_tench", "title": "The Moonlit Tench", "desc": "Catch a Moonlit Tench at night.",
+		"kind": "catch_species", "target": "moon_tench", "need": 1, "reward": 180},
+	{"id": "gale_smelt", "title": "Storm Chaser", "desc": "Catch a Gale Smelt in a thunderstorm.",
+		"kind": "catch_species", "target": "gale_smelt", "need": 1, "reward": 160},
 ]
 
 var quests: Array = []
@@ -241,6 +276,21 @@ func buy_axe() -> bool:
 		axe_level = 1
 	else:
 		axe_level = 2
+	if AUTO_SAVE:
+		save_game()
+	return true
+
+## Buy the next set-line tier (Willow 300 / Braided 800 / Rack 1,600).
+func buy_trotline() -> bool:
+	var d := ShopDB.trotline_next(trotline_tier)
+	if d.is_empty():
+		return false
+	var cost := int(d.get("cost", 0))
+	if cost <= 0 or not can_afford(cost):
+		return false
+	coins -= cost
+	trotline_tier = int(d.get("tier", trotline_tier + 1))
+	play_sound("ui")
 	if AUTO_SAVE:
 		save_game()
 	return true
@@ -329,11 +379,16 @@ func grant_everything() -> void:
 		var wg: Array = f.get("weight_kg", [0.1, 1.0])
 		var entry: Dictionary = index.get(id, {})
 		entry["caught"] = true
-		entry["count"] = maxi(1, int(entry.get("count", 0)))
+		entry["count"] = maxi(40, int(entry.get("count", 0)))
 		entry["pb_weight"] = maxf(float(wg[wg.size() - 1]), float(entry.get("pb_weight", 0.0)))
 		entry["region"] = String(f.get("region", "pond"))
 		index[id] = entry
 	total_caught = maxi(total_caught, index.size())
+	# Leave mastery empty on purpose: the first catch then pays the whole
+	# Bronze -> Silver -> Gold cascade so the rank-up flow can be tested.
+	mastery = {}
+	trotline_tier = 3
+	set_lines = {}
 	# a handful of top-value fish in the bucket so selling can be tested
 	var pool := FishDB.FISH.keys()
 	# Force the Harvest Feast on and hand over the completed album AND the
@@ -701,6 +756,10 @@ func _save_data() -> Dictionary:
 		},
 		"harvest": harvest,
 		"force_harvest": force_harvest,
+		"mastery": mastery,
+		"daily": daily,
+		"trotline_tier": trotline_tier,
+		"set_lines": set_lines,
 	}
 
 ## Write through a temp file, park the previous save as a .bak, then swap
@@ -849,6 +908,27 @@ func _load_game() -> void:
 	# fresh quest metadata + any missing (new) quests, keeping saved progress
 	quests = _merge_quests(data.get("quests", []))
 	_init_index()
+	# Almanac state (v1.10). Old saves gain empty daily / line blocks. The
+	# mastery block is synced to the recorded counts with NO retroactive
+	# payout, exactly as a fresh install would derive it.
+	trotline_tier = clampi(int(data.get("trotline_tier", 0)), 0, 3)
+	var saved_lines: Variant = data.get("set_lines", {})
+	set_lines = saved_lines if typeof(saved_lines) == TYPE_DICTIONARY else {}
+	var saved_mastery: Variant = data.get("mastery", {})
+	mastery = {}
+	for fid in index.keys():
+		var derived := AlmanacLib.mastery_rank(int(index[fid].get("count", 0)))
+		var paid := 0
+		if typeof(saved_mastery) == TYPE_DICTIONARY:
+			paid = int(saved_mastery.get(fid, 0))
+		mastery[fid] = clampi(maxi(derived, paid), 0, 3)
+	daily = DAILY_DEFAULTS.duplicate(true)
+	var saved_daily: Variant = data.get("daily", {})
+	if typeof(saved_daily) == TYPE_DICTIONARY:
+		for k in DAILY_DEFAULTS.keys():
+			if saved_daily.has(k):
+				daily[k] = saved_daily[k]
+	ensure_daily()
 	# Repair an album that reached 20/20 without the award (an old/hand-edited
 	# save): the boat is always granted automatically, never claimable.
 	if harvest_owned_count() >= HarvestCardsLib.ALL_IDS.size():
@@ -955,6 +1035,12 @@ func reset_progress() -> void:
 	SeasonTheme.revert()
 	quests = _merge_quests([])
 	_init_index()
+	mastery = {}
+	daily = DAILY_DEFAULTS.duplicate(true)
+	trotline_tier = 0
+	set_lines = {}
+	last_mastery_rank = 0
+	last_mastery_coins = 0
 	session_started = false
 	save_game()
 
@@ -1404,7 +1490,9 @@ func rarity_of(fish_id: String) -> String:
 	return String(f.get("rarity", "Common"))
 
 func record_catch(fish_id: String, weight: float, region: String, night := false,
-		weather := "", perfect := false) -> void:
+		weather := "", perfect := false, via_line := false) -> void:
+	last_mastery_rank = 0
+	last_mastery_coins = 0
 	var entry: Dictionary = index.get(fish_id, {"caught": false, "count": 0, "pb_weight": 0.0, "region": region})
 	if not entry.get("caught", false):
 		entry["caught"] = true
@@ -1420,12 +1508,15 @@ func record_catch(fish_id: String, weight: float, region: String, night := false
 		entry["pb_weight"] = weight
 	entry["region"] = region
 	index[fish_id] = entry
+	_check_mastery(fish_id)
 	harvest_on_catch(fish_id)
 	inventory.append({"fish_id": fish_id, "weight": weight, "region": region,
 		"caught_at": Time.get_ticks_msec(), "perfect": perfect})
 	total_caught += 1
-	stats["current_streak"] = int(stats.get("current_streak", 0)) + 1
-	stats["best_streak"] = maxi(int(stats.get("best_streak", 0)), int(stats["current_streak"]))
+	# A set line is patience, not a hot hand: it never bumps the sale streak.
+	if not via_line:
+		stats["current_streak"] = int(stats.get("current_streak", 0)) + 1
+		stats["best_streak"] = maxi(int(stats.get("best_streak", 0)), int(stats["current_streak"]))
 	if perfect:
 		stats["perfect_catches"] = int(stats.get("perfect_catches", 0)) + 1
 	if fish_id == daily_fish_id():
@@ -1498,7 +1589,7 @@ func streak_sale_mult() -> float:
 	return 1.0 + float(mini(int(stats.get("current_streak", 0)), 10)) * 0.02
 
 ## Combined multiplier from daily catch, daily demand, perfect catch,
-## streak and the 2x coin event.
+## streak, Gold mastery and the 2x coin event.
 func sale_mult(fish_id: String, perfect := false) -> float:
 	var m := streak_sale_mult()
 	if is_daily_catch(fish_id):
@@ -1507,6 +1598,8 @@ func sale_mult(fish_id: String, perfect := false) -> float:
 		m *= 1.3
 	if perfect:
 		m *= 1.15
+	# Gold mastery: +0.5% per Gold species, capped at +15%.
+	m *= mastery_sale_mult()
 	return m * money_mult()
 
 ## Final value used by the market, the Tackle Shop and the catch popup.
@@ -1556,7 +1649,7 @@ func sell_all(mult: float = 1.0) -> int:
 	stats["coins_earned"] = int(stats.get("coins_earned", 0)) + total
 	stats["fish_sold"] = int(stats.get("fish_sold", 0)) + count
 	add_coins(total)
-	_check_quests("sell", "", {"coins": total})
+	_check_quests("sell", "", {"coins": total, "count": count})
 	if AUTO_SAVE:
 		save_game()
 	return total
@@ -1574,7 +1667,7 @@ func sell_one(index: int, mult: float = 1.0) -> int:
 	stats["coins_earned"] = int(stats.get("coins_earned", 0)) + value
 	stats["fish_sold"] = int(stats.get("fish_sold", 0)) + 1
 	add_coins(value)
-	_check_quests("sell", "", {"coins": value})
+	_check_quests("sell", "", {"coins": value, "count": 1})
 	if AUTO_SAVE:
 		save_game()
 	return value
@@ -1823,6 +1916,364 @@ func _species_discovered() -> int:
 			n += 1
 	return n
 
+## --- Angler Almanac: mastery ---------------------------------------
+func mastery_paid(fish_id: String) -> int:
+	return int(mastery.get(fish_id, 0))
+
+
+## The rank the recorded catch count has reached (always authoritative).
+func mastery_rank(fish_id: String) -> int:
+	return AlmanacLib.mastery_rank(int(index.get(fish_id, {}).get("count", 0)))
+
+
+## [gold, silver, bronze] counts using the derived rank (all species).
+func mastery_counts() -> Array:
+	var out := [0, 0, 0]
+	for fid in FishDB.FISH.keys():
+		var r := mastery_rank(String(fid))
+		if r >= 1 and r <= 3:
+			out[3 - r] += 1
+	return out
+
+
+func gold_species_count() -> int:
+	var n := 0
+	for fid in FishDB.FISH.keys():
+		if mastery_rank(String(fid)) >= 3:
+			n += 1
+	return n
+
+
+func angler_points() -> int:
+	var total := 0
+	for fid in FishDB.FISH.keys():
+		total += AlmanacLib.rank_points(mastery_rank(String(fid)))
+	return total
+
+
+func angler_title() -> String:
+	return AlmanacLib.title_for(angler_points())
+
+
+## [next title, points needed] or ["", 0] at Legend.
+func angler_next() -> Array:
+	return AlmanacLib.next_title(angler_points())
+
+
+func mastery_sale_mult() -> float:
+	return 1.0 + AlmanacLib.gold_bonus(gold_species_count())
+
+
+func _mastery_species_at(rank: int) -> int:
+	var n := 0
+	for fid in FishDB.FISH.keys():
+		if mastery_rank(String(fid)) >= rank:
+			n += 1
+	return n
+
+
+## Pay every newly reached medal exactly once, oldest rank first. A save
+## loaded without a mastery block is synced to its counts without paying.
+func _check_mastery(fish_id: String) -> void:
+	var reached := mastery_rank(fish_id)
+	var paid := mastery_paid(fish_id)
+	if reached <= paid:
+		return
+	var total := 0
+	for rank in range(paid + 1, reached + 1):
+		total += AlmanacLib.rank_coins(rank)
+		mastery[fish_id] = rank
+		last_mastery_rank = rank
+		last_mastery_coins += AlmanacLib.rank_coins(rank)
+		mastery_ranked.emit(fish_id, rank)
+	if total > 0:
+		coins += total
+		coins_gained.emit(total)
+		play_sound("fanfare")
+	_check_quests("mastery_rank", fish_id, {"rank": reached})
+
+
+## --- Angler Almanac: daily board ------------------------------------
+## Local epoch day. Godot reports the timezone bias in minutes east of
+## UTC (-300 for UTC-5), so add it to the epoch before flooring. The board
+## only ever rolls forward, so a clock that jumps back keeps the board
+## already on screen.
+func day_index() -> int:
+	var bias := 0
+	var tz: Variant = Time.get_time_zone_from_system()
+	if typeof(tz) == TYPE_DICTIONARY:
+		bias = int(tz.get("bias", 0))
+	return int(floor((Time.get_unix_time_from_system() + float(bias) * 60.0) / 86400.0))
+
+
+func ensure_daily() -> Dictionary:
+	var today := day_index()
+	var board_day := int(daily.get("day", 0))
+	if board_day == today:
+		var ids: Array = daily.get("ids", [])
+		if ids.is_empty():
+			daily["ids"] = AlmanacLib.pick_daily_ids(today)
+		return daily
+	if board_day > today:
+		return daily
+	var streak := int(daily.get("streak", 0))
+	var last := int(daily.get("last_complete_day", 0))
+	daily = DAILY_DEFAULTS.duplicate(true)
+	daily["day"] = today
+	daily["ids"] = AlmanacLib.pick_daily_ids(today)
+	daily["streak"] = streak
+	daily["last_complete_day"] = last
+	request_save()
+	return daily
+
+
+func daily_progress(id: String) -> int:
+	var board := ensure_daily()
+	var prog: Dictionary = board.get("progress", {})
+	return int(prog.get(id, 0))
+
+
+func daily_need(id: String) -> int:
+	return maxi(1, int(AlmanacLib.daily_def(id).get("need", 1)))
+
+
+func daily_done(id: String) -> bool:
+	return daily_progress(id) >= daily_need(id)
+
+
+func daily_claimed(id: String) -> bool:
+	var board := ensure_daily()
+	var claimed: Array = board.get("claimed", [])
+	return claimed.has(id)
+
+
+func daily_claimable_count() -> int:
+	ensure_daily()
+	var n := 0
+	var ids: Array = daily.get("ids", [])
+	var claimed: Array = daily.get("claimed", [])
+	for id_v in ids:
+		var id := String(id_v)
+		if not claimed.has(id) and daily_done(id):
+			n += 1
+	return n
+
+
+## Claim one finished daily. Pays the streak-scaled reward once; the third
+## claim of the day also pays the completion bonus and advances the streak.
+func claim_daily(challenge_id: String) -> int:
+	var board := ensure_daily()
+	var ids: Array = board.get("ids", [])
+	if not ids.has(challenge_id):
+		return 0
+	var claimed: Array = board.get("claimed", [])
+	if claimed.has(challenge_id):
+		return 0
+	var def := AlmanacLib.daily_def(challenge_id)
+	if def.is_empty() or daily_progress(challenge_id) < daily_need(challenge_id):
+		return 0
+	var streak := int(board.get("streak", 0))
+	var reward := float(def.get("reward", 0))
+	var gain := int(round(reward * (1.0 + AlmanacLib.DAILY_STREAK_STEP
+			* float(mini(streak, AlmanacLib.DAILY_STREAK_CAP))) * money_mult()))
+	claimed.append(challenge_id)
+	board["claimed"] = claimed
+	if claimed.size() >= ids.size():
+		gain += AlmanacLib.DAILY_BONUS
+		var today := day_index()
+		if int(board.get("last_complete_day", 0)) == today - 1:
+			board["streak"] = streak + 1
+		else:
+			board["streak"] = 1
+		board["last_complete_day"] = today
+		daily_completed.emit(int(board["streak"]))
+	coins += gain
+	coins_gained.emit(gain)
+	play_sound("coin")
+	_check_quests("daily_streak", "", {"streak": int(board.get("streak", 0))})
+	request_save()
+	return gain
+
+
+## Feed catch / sell events into the three challenges on the board.
+func _check_dailies(kind: String, fish_id: String, data: Dictionary = {}) -> void:
+	var board := ensure_daily()
+	var ids: Array = board.get("ids", [])
+	var claimed: Array = board.get("claimed", [])
+	var prog: Dictionary = board.get("progress", {})
+	var changed := false
+	for id_v in ids:
+		var id := String(id_v)
+		if claimed.has(id):
+			continue
+		var def := AlmanacLib.daily_def(id)
+		if def.is_empty():
+			continue
+		var cur := int(prog.get(id, 0))
+		var need := maxi(1, int(def.get("need", 1)))
+		if cur >= need:
+			continue
+		var inc := 0
+		match String(def.get("kind", "")):
+			"catch_any":
+				if kind == "catch":
+					inc = 1
+			"catch_rarity":
+				if kind == "catch" and rarity_of(fish_id) == String(def.get("target", "")):
+					inc = 1
+			"catch_night":
+				if kind == "catch" and bool(data.get("night", false)):
+					inc = 1
+			"catch_weight":
+				if kind == "catch" and float(data.get("weight", 0.0)) >= float(def.get("target", 0.0)):
+					inc = 1
+			"catch_weather":
+				if kind == "catch":
+					var wet := String(data.get("weather", ""))
+					var target := String(def.get("target", "bad"))
+					if (target == "bad" and (wet == "rain" or wet == "storm")) or target == wet:
+						inc = 1
+			"perfect_catch":
+				if kind == "catch" and bool(data.get("perfect", false)):
+					inc = 1
+			"region_catch":
+				if kind == "catch" and String(data.get("region", "")) == String(def.get("target", "")):
+					inc = 1
+			"sell_count":
+				if kind == "sell":
+					inc = maxi(1, int(data.get("count", 1)))
+			"catch_streak":
+				if kind == "catch":
+					var s := maxi(cur, int(data.get("streak", 0)))
+					if s > cur:
+						prog[id] = s
+						changed = true
+					continue
+		if inc > 0:
+			prog[id] = cur + inc
+			changed = true
+	if changed:
+		board["progress"] = prog
+		request_save()
+
+
+## --- Angler Almanac: set lines --------------------------------------
+func trotline_slots() -> int:
+	return ShopDB.trotline_slots(trotline_tier)
+
+
+func line_slots_used() -> int:
+	return set_lines.size()
+
+
+func line_ready(spot: String) -> bool:
+	return set_lines.has(spot) and line_seconds_left(spot) <= 0
+
+
+## Seconds until ready; 0 when ready or when no line is set there.
+func line_seconds_left(spot: String) -> int:
+	if not set_lines.has(spot):
+		return 0
+	var placed := float(set_lines.get(spot, 0))
+	var elapsed := maxf(0.0, Time.get_unix_time_from_system() - placed)
+	return maxi(0, int(ceil(SET_LINE_SECONDS - elapsed)))
+
+
+func line_ready_any() -> bool:
+	for spot in set_lines.keys():
+		if line_ready(String(spot)):
+			return true
+	return false
+
+
+func line_spot_name(spot: String) -> String:
+	return String(FishDB.REGION_DISPLAY.get(spot, spot.capitalize()))
+
+
+## Empty string on success, otherwise a reason code the HUD turns into a hint.
+func place_line(spot: String) -> String:
+	if spot == "island":
+		return "island"
+	if spot == "" or spot.begins_with("open") or not ["pond", "river", "lake", "ocean"].has(spot):
+		return "open"
+	if set_lines.has(spot):
+		return "already"
+	if trotline_slots() <= 0:
+		return "no_gear"
+	if set_lines.size() >= trotline_slots():
+		return "busy"
+	set_lines[spot] = int(Time.get_unix_time_from_system())
+	stats["lines_set"] = int(stats.get("lines_set", 0)) + 1
+	play_sound("cast")
+	_check_quests("line_set", "", {"spot": spot})
+	request_save()
+	return ""
+
+
+func _line_pool(spot: String, weather: String, night: bool) -> Array:
+	var season := "harvest" if harvest_season_open() else ""
+	var raw := FishDB.fish_pool(spot, weather, night, season)
+	var out: Array = []
+	for f in raw:
+		if bool(f.get("anywhere", false)) or bool(f.get("bait_only", false)):
+			continue
+		if String(f.get("rarity", "")) == "Legendary":
+			continue
+		out.append(f)
+	return out
+
+
+## Rarity weights 62 / 27 / 8 / 3 Common / Uncommon / Rare / Epic.
+func _roll_line_fish(pool: Array) -> Dictionary:
+	if pool.is_empty():
+		return {}
+	var roll := randf() * 100.0
+	var want := "Common"
+	if roll >= 97.0:
+		want = "Epic"
+	elif roll >= 89.0:
+		want = "Rare"
+	elif roll >= 62.0:
+		want = "Uncommon"
+	var matches: Array = []
+	for f in pool:
+		if String(f.get("rarity", "")) == want:
+			matches.append(f)
+	if matches.is_empty():
+		matches = pool
+	return matches[randi() % matches.size()]
+
+
+## Collect a ready line. The line stays in the water when the bucket is
+## full, so nothing is ever lost to a full bag.
+func collect_line(spot: String, weather := "", night := false) -> Dictionary:
+	if not set_lines.has(spot):
+		return {"ok": false, "reason": "empty"}
+	if line_seconds_left(spot) > 0:
+		return {"ok": false, "reason": "waiting"}
+	if inventory_count() >= bucket_capacity():
+		return {"ok": false, "reason": "full"}
+	var pool := _line_pool(spot, weather, night)
+	if pool.is_empty():
+		return {"ok": false, "reason": "empty_pool"}
+	var f := _roll_line_fish(pool)
+	var fid := String(f.get("id", ""))
+	var wg: Array = f.get("weight_kg", [0.1, 1.0])
+	var weight := randf_range(float(wg[0]), float(wg[1]))
+	set_lines.erase(spot)
+	record_catch(fid, weight, spot, night, weather, false, true)
+	var bait_back := false
+	var bait_id := String(gear.get("bait", ""))
+	if bait_id != "" and randf() < 0.5:
+		bait_counts[bait_id] = bait_count(bait_id) + 1
+		bait_back = true
+	play_sound("bell")
+	_check_quests("line_collect", fid, {"region": spot, "weight": weight,
+			"night": night, "weather": weather})
+	request_save()
+	return {"ok": true, "fish_id": fid, "weight": weight,
+			"name": String(f.get("name", fid)), "bait_back": bait_back, "bait_id": bait_id}
+
 func _check_quests(kind: String, fish_id: String, data: Dictionary = {}) -> void:
 	for q in quests:
 		if bool(q.get("done", false)):
@@ -1854,7 +2305,7 @@ func _check_quests(kind: String, fish_id: String, data: Dictionary = {}) -> void
 					q["progress"] = _species_discovered()
 			"sell_count":
 				if kind == "sell":
-					q["progress"] = int(q.get("progress", 0)) + 1
+					q["progress"] = int(q.get("progress", 0)) + maxi(1, int(data.get("count", 1)))
 			"sell_coins":
 				if kind == "sell":
 					q["progress"] = int(q.get("progress", 0)) + int(data.get("coins", 0))
@@ -1894,8 +2345,21 @@ func _check_quests(kind: String, fish_id: String, data: Dictionary = {}) -> void
 			"casino_won":
 				if kind == "casino":
 					q["progress"] = int(q.get("progress", 0)) + maxi(0, int(data.get("coins", 0)))
+			"line_set":
+				if kind == "line_set":
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"line_collect":
+				if kind == "line_collect":
+					q["progress"] = int(q.get("progress", 0)) + 1
+			"mastery_rank":
+				if kind == "mastery_rank":
+					q["progress"] = _mastery_species_at(int(q.get("target", 1)))
+			"daily_streak":
+				if kind == "daily_streak":
+					q["progress"] = maxi(int(q.get("progress", 0)), int(data.get("streak", 0)))
 		if int(q.get("progress", 0)) >= quest_need(q):
 			q["done"] = true
+	_check_dailies(kind, fish_id, data)
 
 ## Procedural SFX are baked once into AudioStreamWAV clips (a streaming
 ## generator playback leaks an ObjectDB instance at exit) and cached.

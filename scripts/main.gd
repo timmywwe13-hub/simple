@@ -4,6 +4,7 @@ const PixFont := preload("res://scripts/pixel_font.gd")
 const ChangelogLib := preload("res://scripts/changelog.gd")
 const TouchControls := preload("res://scripts/touch_controls.gd")
 const RegionArt := preload("res://scripts/region_art.gd")
+const AlmanacLib := preload("res://scripts/almanac_db.gd")
 
 const STATE_MENU := 0
 const STATE_WORLD := 1
@@ -18,9 +19,10 @@ const STATE_PAUSED := 9
 const STATE_UPDATES := 10
 const STATE_SETTINGS := 11
 const STATE_HARVEST := 12
+const STATE_ALMANAC := 13
 
 const WATER_RATIO := 0.60
-## Height of the start screen card (six menu buttons now).
+## Height of the start screen card (eight menu buttons now).
 const MENU_PANEL_H := 524.0
 ## How long a spot change crossfades its whole palette.
 const ART_FADE := 0.8
@@ -95,6 +97,8 @@ var index_detail_desc: Label
 var index_detail_where: Label
 var index_detail_stats: Label
 var index_detail_region: Label
+var index_detail_mastery: Label
+var index_gold_label: Label
 var index_detail_rarity: Label
 var index_detail_fish: Dictionary = {}
 var index_detail_caught := false
@@ -235,6 +239,21 @@ var shop_scroll_pos := 0
 var shop_from_pause := false
 var stats_panel: Control
 var stats_label: Label
+## The Angler's Almanac full-screen reference (v1.10).
+var almanac_panel: Control
+var almanac_scroll: ScrollContainer
+var almanac_body: VBoxContainer
+var almanac_rank_label: Label
+var almanac_next_label: Label
+var almanac_bar: ProgressBar
+var almanac_gold_label: Label
+var almanac_grid: GridContainer
+var almanac_grid_labels := {}
+var almanac_board_box: VBoxContainer
+var almanac_records_label: Label
+var almanac_notes_label: Label
+var almanac_from_pause := false
+var almanac_from_world := false
 var stats_mute_btn: Button
 var pause_panel: Control
 var pause_mute_btn: Button
@@ -271,6 +290,8 @@ func _ready() -> void:
 	_build_pause()
 	_build_updates()
 	_build_settings()
+	_build_almanac()
+	GameState.mastery_ranked.connect(_on_mastery_ranked)
 	_build_ambient_fish()
 	weather_next = _roll_weather()
 	if GameState.session_started:
@@ -429,7 +450,7 @@ var key_edges := {}
 
 ## Touch button ids polled alongside the keyboard keys in _key_edge().
 const TOUCH_KEY_TAPS := {KEY_R: "rod", KEY_B: "boat", KEY_I: "index", KEY_G: "axe",
-		KEY_1: "spot1", KEY_2: "spot2", KEY_3: "spot3", KEY_4: "spot4"}
+		KEY_P: "line", KEY_1: "spot1", KEY_2: "spot2", KEY_3: "spot3", KEY_4: "spot4"}
 
 ## Testing cheat: typing 2222 on the number-row keys unlocks the whole game
 ## (see GameState.grant_everything). The digits double as the spot keys, so
@@ -441,8 +462,8 @@ var cheat_fired := false
 func _key_tick() -> void:
 	key_edges = {}
 	cheat_fired = false
-	for code in [KEY_1, KEY_2, KEY_3, KEY_4, KEY_B, KEY_R, KEY_I, KEY_G, KEY_E, KEY_F11,
-			KEY_0, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9]:
+	for code in [KEY_1, KEY_2, KEY_3, KEY_4, KEY_B, KEY_R, KEY_I, KEY_G, KEY_E, KEY_P,
+			KEY_F11, KEY_0, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9]:
 		var now := Input.is_physical_key_pressed(code)
 		var was: bool = bool(key_prev.get(code, false))
 		key_prev[code] = now
@@ -933,6 +954,7 @@ func _update_menu() -> void:
 		"stats": _on_stats()
 		"settings": _on_settings()
 		"updates": _on_updates()
+		"almanac": _on_almanac()
 
 
 func _clicked_on_menu() -> bool:
@@ -955,6 +977,8 @@ func _update_world(dt: float) -> void:
 		msg("ROD READY - SPACE OR CLICK TO CAST" if rod_out else "ROD PUT AWAY - PRESS R TO TAKE IT OUT")
 	if _key_edge(KEY_B):
 		_toggle_boat()
+	if _key_edge(KEY_P):
+		_set_line_action()
 	if in_boat:
 		_update_boat(dt)
 	else:
@@ -1042,6 +1066,57 @@ func _update_world(dt: float) -> void:
 		else:
 			_cast_start()
 
+
+## P (or the touch LINE button) sets, checks or collects the line at the
+## current bank. Open water and Coconut Isle have no bank to drive a post
+## into, and a full bucket leaves the fish waiting on the hook.
+func _set_line_action() -> void:
+	if open_water or region.begins_with("open_"):
+		msg("SET LINES NEED A BANK - POND, RIVER, LAKE OR DEEP SEA")
+		GameState.play_sound("buzz")
+		return
+	if is_island:
+		msg("LINES CANNOT BE SET ON COCONUT ISLE")
+		GameState.play_sound("buzz")
+		return
+	if in_boat:
+		msg("STEP OFF THE BOAT TO SET A LINE")
+		GameState.play_sound("buzz")
+		return
+	if GameState.set_lines.has(region):
+		if not GameState.line_ready(region):
+			var left := GameState.line_seconds_left(region)
+			msg("LINE IN THE WATER - %d:%02d TO GO" % [left / 60, left % 60])
+			GameState.play_sound("ui")
+			return
+		var res := GameState.collect_line(region, weather, is_night)
+		if not bool(res.get("ok", false)):
+			match String(res.get("reason", "")):
+				"full": msg("BUCKET FULL - THE LINE WILL WAIT")
+				"empty_pool": msg("NOTHING IS BITING HERE RIGHT NOW")
+				_: msg("THE LINE IS NOT READY YET")
+			GameState.play_sound("buzz")
+			return
+		var tail := " - BAIT SAVED" if bool(res.get("bait_back", false)) else ""
+		msg("%s ON THE LINE! %.2f KG%s" % [String(res.get("name", "FISH")).to_upper(),
+				float(res.get("weight", 0.0)), tail])
+		fx_flash(0.55)
+		return
+	match GameState.place_line(region):
+		"":
+			msg("LINE SET - CHECK BACK IN 8 MINUTES")
+		"no_gear":
+			msg("BUY A SET LINE IN THE TACKLE SHOP")
+			GameState.play_sound("buzz")
+		"busy":
+			msg("ALL SET LINES ARE IN THE WATER - COLLECT ONE FIRST")
+			GameState.play_sound("buzz")
+		"already":
+			msg("A LINE IS ALREADY SET HERE")
+			GameState.play_sound("buzz")
+		_:
+			msg("SET LINES NEED A BANK - POND, RIVER, LAKE OR DEEP SEA")
+			GameState.play_sound("buzz")
 
 ## Gamepad / keyboard spot cycling. Skips locked regions and warns instead
 ## of teleporting into a spot the player has not bought yet.
@@ -1779,6 +1854,8 @@ func hide_all_ui() -> void:
 		updates_panel.visible = false
 	if settings_panel:
 		settings_panel.visible = false
+	if almanac_panel:
+		almanac_panel.visible = false
 
 
 func menu_panel_show() -> void:
@@ -1831,6 +1908,18 @@ func _on_back() -> void:
 		STATE_UPDATES:
 			if updates_from_pause:
 				updates_from_pause = false
+				hide_all_ui()
+				if pause_panel:
+					pause_panel.visible = true
+				state = STATE_PAUSED
+				_refresh_pause()
+			else:
+				show_menu()
+		STATE_ALMANAC:
+			if almanac_from_world:
+				hide_all_ui()
+				state = STATE_WORLD
+			elif almanac_from_pause:
 				hide_all_ui()
 				if pause_panel:
 					pause_panel.visible = true
@@ -1954,6 +2043,7 @@ func _refresh_stats() -> void:
 	var s := GameState.stats
 	var total_species := FishDB.all_ids(_season_id()).size()
 	var caught_species := int(round(GameState.completion_percent() * float(total_species)))
+	var mc: Array = GameState.mastery_counts()
 	var hot := GameState.daily_hot_ids()
 	var hot_names: Array[String] = []
 	for fid in hot:
@@ -1966,6 +2056,9 @@ func _refresh_stats() -> void:
 		"TOTAL CATCHES      %d" % GameState.total_caught,
 		"SPECIES            %d / %d  (%.0f%%)" % [caught_species, total_species,
 				GameState.completion_percent() * 100.0],
+		"ANGLER RANK        %s - %d PTS" % [GameState.angler_title(), GameState.angler_points()],
+		"MASTERY            GOLD %d  SILVER %d  BRONZE %d" % [int(mc[0]), int(mc[1]), int(mc[2])],
+		"GOLD SALE BONUS    +%.1f%%" % ((GameState.mastery_sale_mult() - 1.0) * 100.0),
 		"COINS EARNED       %d" % int(s.get("coins_earned", 0)),
 		"FISH SOLD          %d" % int(s.get("fish_sold", 0)),
 		"PERFECT CATCHES    %d" % int(s.get("perfect_catches", 0)),
@@ -2003,11 +2096,11 @@ func _build_pause() -> void:
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	p.add_child(dim)
 	var card := Control.new()
-	card.size = Vector2(420.0, 420.0)
+	card.size = Vector2(420.0, 468.0)
 	p.add_child(card)
 	pause_card = card
 	var bg := Panel.new()
-	bg.size = Vector2(420.0, 420.0)
+	bg.size = Vector2(420.0, 468.0)
 	bg.add_theme_stylebox_override("panel", UILib.sfx_bg())
 	card.add_child(bg)
 	if SeasonTheme.is_harvest():
@@ -2035,23 +2128,235 @@ func _build_pause() -> void:
 	var settings := UILib.button(card, "SETTINGS", _on_settings.bind(true), 18, GameTheme.PANEL_LIGHT,
 			GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS, UILib.CREAM, Vector2(340.0, 44.0))
 	settings.position = Vector2(40.0, 276.0)
+	var almanac := UILib.button(card, "ALMANAC", _on_almanac.bind(false, true), 18,
+			GameTheme.WOOD, GameTheme.WOOD.lightened(0.12), GameTheme.WOOD.darkened(0.25),
+			UILib.CREAM, Vector2(340.0, 44.0))
+	almanac.position = Vector2(40.0, 324.0)
 	var menu := UILib.button(card, "MAIN MENU", _pause_to_menu, 18, GameTheme.PANEL_LIGHT,
 			GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS, UILib.CREAM, Vector2(340.0, 44.0))
-	menu.position = Vector2(40.0, 324.0)
+	menu.position = Vector2(40.0, 372.0)
 	p.visible = false
 	_layout_pause_card()
 
 
-## The pause card is a fixed 420x420 sheet; shrink it on short windows so
+## The pause card is a fixed 420x468 sheet; shrink it on short windows so
 ## the title and MAIN MENU do not leave the screen on a landscape phone.
 func _layout_pause_card() -> void:
 	if pause_card == null:
 		return
 	var sc := clampf(minf((view_size.x - 16.0) / 420.0,
-			(view_size.y - 16.0) / 420.0), 0.4, 1.0)
+			(view_size.y - 16.0) / 468.0), 0.4, 1.0)
 	pause_card.scale = Vector2(sc, sc)
-	pause_card.position = (view_size - Vector2(420.0, 420.0) * sc) * 0.5
+	pause_card.position = (view_size - Vector2(420.0, 468.0) * sc) * 0.5
 
+
+## --- The Angler Almanac (v1.10) --------------------------------------
+## A full-screen reference: rank card, the 68-species mastery grid, the
+## live daily board, lifetime records and three rotating field notes.
+## The grid is built once here; every other field is refreshed on open.
+func _build_almanac() -> void:
+	var p := Control.new()
+	p.name = "Almanac"
+	p.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ui_layer.add_child(p)
+	almanac_panel = p
+	var bg := ColorRect.new()
+	bg.color = GameTheme.PANEL
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	p.add_child(bg)
+	_add_leaf_sprigs(p)
+	TownUI.ribbon(p, "THE ANGLER ALMANAC", Vector2(16, 8), 430.0, 42.0)
+	var sub := UILib.label(p, "RANK, SPECIES MASTERY, DAILY CHALLENGES AND FIELD NOTES", 14,
+			GameTheme.SUBTEXT)
+	sub.position = Vector2(28, 54)
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scroll.offset_left = 24
+	scroll.offset_top = 84
+	scroll.offset_right = -24
+	scroll.offset_bottom = -68
+	p.add_child(scroll)
+	almanac_scroll = scroll
+	UILib.style_scroll(scroll)
+	var body := VBoxContainer.new()
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("separation", 8)
+	scroll.add_child(body)
+	almanac_body = body
+
+	# --- rank card ---
+	var rank_card := PanelContainer.new()
+	rank_card.add_theme_stylebox_override("panel", UILib.sfx_paper())
+	body.add_child(rank_card)
+	var rank_margin := MarginContainer.new()
+	rank_margin.add_theme_constant_override("margin_left", 18)
+	rank_margin.add_theme_constant_override("margin_right", 18)
+	rank_margin.add_theme_constant_override("margin_top", 12)
+	rank_margin.add_theme_constant_override("margin_bottom", 12)
+	rank_card.add_child(rank_margin)
+	var rank_box := VBoxContainer.new()
+	rank_box.add_theme_constant_override("separation", 4)
+	rank_margin.add_child(rank_box)
+	UILib.label(rank_box, "ANGLER RANK", 13, UILib.WOOD_DARK, false)
+	almanac_rank_label = UILib.label(rank_box, "", 28, GameTheme.INK, false)
+	almanac_next_label = UILib.label(rank_box, "", 13, Color("#5a4a55"), false)
+	almanac_bar = ProgressBar.new()
+	almanac_bar.custom_minimum_size = Vector2(0, 16)
+	almanac_bar.max_value = 1.0
+	almanac_bar.step = 0.001
+	almanac_bar.show_percentage = false
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color("#b79a72")
+	bar_bg.set_corner_radius_all(8)
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = GameTheme.GOLD
+	bar_fill.set_corner_radius_all(8)
+	almanac_bar.add_theme_stylebox_override("background", bar_bg)
+	almanac_bar.add_theme_stylebox_override("fill", bar_fill)
+	rank_box.add_child(almanac_bar)
+
+	# --- mastery grid ---
+	var mh := HBoxContainer.new()
+	mh.add_theme_constant_override("separation", 18)
+	body.add_child(mh)
+	var ml := UILib.label(mh, "SPECIES MASTERY", 17, GameTheme.GOLD, true)
+	ml.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	almanac_gold_label = UILib.label(mh, "", 14, GameTheme.CREAM, false,
+			HORIZONTAL_ALIGNMENT_RIGHT)
+	UILib.label(body, "CATCH EACH SPECIES 5 / 15 / 40 TIMES FOR BRONZE / SILVER / GOLD - MEDALS PAY COINS AND POINTS",
+			12, GameTheme.SUBTEXT, false)
+	almanac_grid = GridContainer.new()
+	almanac_grid.columns = 4
+	almanac_grid.add_theme_constant_override("h_separation", 10)
+	almanac_grid.add_theme_constant_override("v_separation", 2)
+	body.add_child(almanac_grid)
+	var ids: Array = FishDB.FISH.keys()
+	ids.sort_custom(func(a, b):
+		return String(FishDB.FISH[a].get("name", "")) < String(FishDB.FISH[b].get("name", "")))
+	for id_v in ids:
+		var fid := String(id_v)
+		var lab := UILib.label(almanac_grid, "", 12, GameTheme.FAINT, false)
+		lab.custom_minimum_size = Vector2(200, 18)
+		lab.clip_text = true
+		almanac_grid_labels[fid] = lab
+
+	UILib.separator(body, 8.0)
+	# --- today board ---
+	UILib.label(body, "TODAY'S BOARD", 17, GameTheme.GOLD, true)
+	almanac_board_box = VBoxContainer.new()
+	almanac_board_box.add_theme_constant_override("separation", 2)
+	body.add_child(almanac_board_box)
+	UILib.label(body, "CLAIM AT THE QUEST BOARD IN TOWN", 12, GameTheme.SUBTEXT, false)
+
+	UILib.separator(body, 8.0)
+	# --- records + notes ---
+	UILib.label(body, "RECORDS", 17, GameTheme.GOLD, true)
+	almanac_records_label = UILib.label(body, "", 14, GameTheme.CREAM, false)
+	almanac_records_label.add_theme_constant_override("line_spacing", 4)
+	UILib.separator(body, 8.0)
+	UILib.label(body, "FIELD NOTES", 17, GameTheme.GOLD, true)
+	almanac_notes_label = UILib.label(body, "", 14, GameTheme.WHEAT, false)
+	almanac_notes_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	almanac_notes_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# almanac_notes_label is already parented by UILib.label
+
+	var b := UILib.button(p, "BACK", _on_back, 20, GameTheme.PANEL_LIGHT)
+	b.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	b.offset_left = 28
+	b.offset_top = -60
+	b.offset_right = 188
+	b.offset_bottom = -16
+	b.custom_minimum_size = Vector2(160, 44)
+	p.visible = false
+
+
+func _on_almanac(from_world := false, from_pause := false) -> void:
+	hide_all_ui()
+	almanac_from_world = from_world
+	almanac_from_pause = from_pause
+	almanac_panel.visible = true
+	state = STATE_ALMANAC
+	if almanac_scroll != null:
+		almanac_scroll.scroll_vertical = 0
+	_refresh_almanac()
+
+
+func _mastery_color(rank: int) -> Color:
+	match rank:
+		1: return Color("#c98a54")
+		2: return Color("#cfd6e4")
+		3: return GameTheme.GOLD
+		_: return GameTheme.FAINT
+
+
+func _refresh_almanac() -> void:
+	if almanac_panel == null or almanac_rank_label == null:
+		return
+	GameState.ensure_daily()
+	var pts := GameState.angler_points()
+	almanac_rank_label.text = "ANGLER RANK: %s - %d PTS" % [GameState.angler_title(), pts]
+	var nxt: Array = GameState.angler_next()
+	if nxt.is_empty() or String(nxt[0]) == "":
+		almanac_next_label.text = "MAX RANK - %d / %d POINTS" % [pts,
+				AlmanacLib.MASTERY_MAX_POINTS]
+		almanac_bar.value = 1.0
+	else:
+		var need := int(nxt[1])
+		almanac_next_label.text = "NEXT: %s AT %d PTS (%d TO GO)" % [String(nxt[0]), need,
+				maxi(0, need - pts)]
+		almanac_bar.value = clampf(float(pts) / float(maxi(1, need)), 0.0, 1.0)
+	var mc: Array = GameState.mastery_counts()
+	almanac_gold_label.text = "GOLD %d   SILVER %d   BRONZE %d" % [int(mc[0]), int(mc[1]), int(mc[2])]
+	for fid in almanac_grid_labels.keys():
+		var lab: Label = almanac_grid_labels[fid]
+		var rank := GameState.mastery_rank(String(fid))
+		var fname := String(FishDB.fish_data(String(fid)).get("name", fid)).to_upper()
+		var medal := "-" if rank <= 0 else AlmanacLib.rank_name(rank)
+		lab.text = "%s  %s" % [fname, medal]
+		lab.add_theme_color_override("font_color", _mastery_color(rank))
+	var streak := int(GameState.daily.get("streak", 0))
+	for c in almanac_board_box.get_children():
+		almanac_board_box.remove_child(c)
+		c.queue_free()
+	UILib.label(almanac_board_box, "STREAK %d DAYS - FINISH ALL THREE FOR +%d COINS" % [streak,
+			AlmanacLib.DAILY_BONUS], 12, GameTheme.SUBTEXT, false)
+	var ids: Array = GameState.daily.get("ids", [])
+	for id_v in ids:
+		var id := String(id_v)
+		var def := AlmanacLib.daily_def(id)
+		var need := GameState.daily_need(id)
+		var prog := mini(GameState.daily_progress(id), need)
+		var status := "CLAIMED" if GameState.daily_claimed(id) else (
+				"READY" if prog >= need else "%d / %d" % [prog, need])
+		var c := GameTheme.LEAF if status == "READY" else (
+				GameTheme.FAINT if status == "CLAIMED" else GameTheme.CREAM)
+		UILib.label(almanac_board_box, "%s   %s   +%d" % [String(def.get("label", "")).to_upper(),
+				status, int(def.get("reward", 0))], 14, c, false)
+	var st := GameState.stats
+	var biggest := String(st.get("biggest_name", "-"))
+	if biggest == "":
+		biggest = "-"
+	var rec := [
+		"BIGGEST FISH       %.2f KG  %s" % [float(st.get("biggest_fish", 0.0)), biggest],
+		"BEST CATCH STREAK  %d" % int(st.get("best_streak", 0)),
+		"PERFECT CATCHES    %d" % int(st.get("perfect_catches", 0)),
+		"DAYS FISHED        %d" % int(st.get("days_fished", 0)),
+		"FISH SOLD          %d" % int(st.get("fish_sold", 0)),
+		"SET LINES PLACED   %d" % int(st.get("lines_set", 0)),
+	]
+	almanac_records_label.text = "\n".join(rec)
+	var notes: Array[String] = []
+	for n in AlmanacLib.pick_field_notes(GameState.day_index()):
+		notes.append("- " + String(n))
+	almanac_notes_label.text = "\n".join(notes)
+
+
+## Medal rank-up toast + flash. The card also tags the species on the
+## catch screen via GameState.last_mastery_rank.
+func _on_mastery_ranked(fish_id: String, rank: int) -> void:
+	var fname := String(FishDB.fish_data(fish_id).get("name", fish_id)).to_upper()
+	msg("%s %s! +%d COINS" % [fname, AlmanacLib.rank_name(rank), AlmanacLib.rank_coins(rank)])
+	fx_flash(0.45 if rank < 3 else 0.9)
 
 ## Patch-notes screen. The body is rebuilt on open so the 2x event
 ## countdown is always current.
@@ -2391,6 +2696,9 @@ func _build_index() -> void:
 	TownUI.ribbon(p, "FISH INDEX", Vector2(16, 8), 330.0, 42.0)
 	index_comp_label = UILib.label(p, "COLLECTION: 0%", 18, GameTheme.GOLD, true, HORIZONTAL_ALIGNMENT_LEFT)
 	index_comp_label.position = Vector2(24, 52)
+	index_gold_label = UILib.label(p, "", 12, GameTheme.SUBTEXT, false,
+			HORIZONTAL_ALIGNMENT_LEFT)
+	index_gold_label.position = Vector2(24, 76)
 	index_filter_btn = UILib.button(p, "REGION: ALL", _cycle_index_region, 14, GameTheme.PANEL_LIGHT,
 			GameTheme.BUTTON_HOVER, GameTheme.BUTTON_PRESS, UILib.CREAM, Vector2(190.0, 40.0))
 	index_filter_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -2451,7 +2759,7 @@ func _build_index() -> void:
 	index_detail_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	index_detail.add_child(index_detail_scroll)
 	index_detail_content = Control.new()
-	index_detail_content.custom_minimum_size = Vector2(0.0, 360.0)
+	index_detail_content.custom_minimum_size = Vector2(0.0, 388.0)
 	index_detail_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	index_detail_scroll.add_child(index_detail_content)
 
@@ -2522,6 +2830,15 @@ func _build_index() -> void:
 	index_detail_region.offset_top = 324.0
 	index_detail_region.offset_bottom = 352.0
 
+	index_detail_mastery = UILib.label(index_detail_content, "", 15, GameTheme.GOLD, true,
+			HORIZONTAL_ALIGNMENT_LEFT)
+	index_detail_mastery.anchor_left = 0.0
+	index_detail_mastery.anchor_right = 1.0
+	index_detail_mastery.offset_left = 14.0
+	index_detail_mastery.offset_right = -14.0
+	index_detail_mastery.offset_top = 356.0
+	index_detail_mastery.offset_bottom = 382.0
+
 	var b := UILib.button(p, "BACK", _on_back, 20, GameTheme.PANEL_LIGHT)
 	b.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	b.offset_left = 24
@@ -2586,6 +2903,10 @@ func _refresh_index() -> void:
 		index_list.set_item_disabled(empty_idx, true)
 	var pct := float(caught) / float(total) * 100.0 if total > 0 else 0.0
 	index_comp_label.text = "COLLECTION: %d / %d  (%.0f%%)   SHOWING %d" % [caught, total, pct, shown]
+	if index_gold_label != null:
+		var mc: Array = GameState.mastery_counts()
+		index_gold_label.text = "GOLD %d   SILVER %d   BRONZE %d" % [int(mc[0]), int(mc[1]),
+				int(mc[2])]
 	if index_filter_btn != null:
 		var region_name := "ALL" if index_filter_region == "" else RegionArt.display(index_filter_region).to_upper()
 		if index_filter_region == "harvest":
@@ -2648,6 +2969,8 @@ func _show_index_detail(fid: String) -> void:
 		index_detail_where.text = ""
 		index_detail_stats.text = "COLLECTION: %.0f%%" % (GameState.completion_percent() * 100.0)
 		index_detail_region.text = ""
+		index_detail_mastery.text = ""
+		index_detail_mastery.add_theme_color_override("font_color", GameTheme.SUBTEXT)
 		if index_detail_art != null:
 			index_detail_art.queue_redraw()
 		return
@@ -2671,6 +2994,11 @@ func _show_index_detail(fid: String) -> void:
 				int(entry.get("count", 0))]
 	else:
 		index_detail_stats.text = "PB: --    CAUGHT: 0"
+	var mrank := GameState.mastery_rank(fid)
+	index_detail_mastery.text = "MASTERY: " + (AlmanacLib.mastery_line(int(entry.get("count", 0)))
+			if caught else "-")
+	index_detail_mastery.add_theme_color_override("font_color",
+			_mastery_color(mrank) if mrank > 0 else GameTheme.SUBTEXT)
 	var region_name := String(f.get("region", "pond"))
 	var region_fishes := FishDB.fish_by_region(region_name, _season_id())
 	var region_caught := 0
@@ -2810,6 +3138,7 @@ func _refresh_shop() -> void:
 	_shop_cat("Bait", "baits", _on_buy_bait)
 	_shop_cat("Lanterns", "lanterns", _on_buy)
 	_shop_cat("Bucket", "buckets", _on_buy)
+	_trotline_section()
 	_restore_shop_scroll(shop_scroll_pos)
 
 
@@ -2872,6 +3201,63 @@ func _shop_cat(title: String, category: String, buy_func: Callable) -> void:
 ## Coconut Isle crafting: the axe and the island rods. They are paid in
 ## coconuts (from chopped palms), never in coins, so they feel like
 ## found-and-built upgrades rather than shop stock.
+## Set Lines are a one-time capacity upgrade, not equipable gear, so they
+## get their own row layout instead of the generic shop category.
+func _trotline_section() -> void:
+	var t := UILib.label(shop_content, "SET LINES", 20, GameTheme.GOLD, true,
+			HORIZONTAL_ALIGNMENT_LEFT)
+	t.custom_minimum_size = Vector2(0.0, 28)
+	var note := UILib.label(shop_content,
+			"PASSIVE FISH - PRESS P ON THE BANK TO SET OR COLLECT (8 MIN)", 13,
+			GameTheme.SUBTEXT, false)
+	note.custom_minimum_size = Vector2(0.0, 20)
+	var have := GameState.trotline_tier
+	for tier_v in [1, 2, 3]:
+		var tier := int(tier_v)
+		var d := ShopDB.trotline_item(tier)
+		var owned := tier <= have
+		var next := tier == have + 1
+		var row := Control.new()
+		row.custom_minimum_size = Vector2(0.0, 50.0)
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		shop_content.add_child(row)
+		var name_l := UILib.label(row, String(d.get("name", "")), 17,
+				GameTheme.FAINT if owned else GameTheme.CREAM, true)
+		name_l.position = Vector2(10, 6)
+		var desc_l := UILib.label(row, String(d.get("desc", "")), 13, GameTheme.SUBTEXT, false)
+		desc_l.position = Vector2(10, 26)
+		var stat := "%d LINE%s" % [int(d.get("slots", 1)),
+				"" if int(d.get("slots", 1)) == 1 else "S"]
+		if owned:
+			stat = "OWNED - %s" % stat
+		elif not next:
+			stat = "NEEDS THE TIER BEFORE"
+		var stat_l := UILib.label(row, stat, 13, GameTheme.LEAF if next else GameTheme.FAINT, false)
+		stat_l.position = Vector2(330, 10)
+		var btn_text := "OWNED" if owned else ("BUY %d" % int(d.get("cost", 0)) if next
+				else "LOCKED")
+		var cb: Callable = func() -> void: pass
+		if next:
+			cb = _on_buy_trotline
+		var btn := UILib.button(row, btn_text, cb, 14, GameTheme.PANEL_LIGHT)
+		btn.disabled = not next
+		btn.custom_minimum_size = Vector2(120, 36)
+		btn.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+		btn.offset_left = -130
+		btn.offset_right = -10
+		btn.offset_top = -18
+		btn.offset_bottom = 18
+
+
+func _on_buy_trotline() -> void:
+	if GameState.buy_trotline():
+		GameState.play_sound("bell")
+		msg("SET LINE UPGRADED - %d SLOTS" % GameState.trotline_slots())
+		_refresh_shop()
+	else:
+		GameState.play_sound("buzz")
+		msg("NOT ENOUGH COINS FOR THAT SET LINE")
+
 func _craft_section() -> void:
 	var t := UILib.label(shop_content, "COCONUT ISLE CRAFTING", 20, GameTheme.GOLD, true,
 			HORIZONTAL_ALIGNMENT_LEFT)
@@ -3034,6 +3420,7 @@ func _menu_button_rects() -> Array:
 		{"id": "settings", "y": by + 185.0, "label": "SETTINGS"},
 		{"id": "updates", "y": by + 222.0,
 				"label": "WHAT'S NEW!" if ChangelogLib.is_unseen() else "WHAT'S NEW"},
+		{"id": "almanac", "y": by + 259.0, "label": "ALMANAC"},
 	]
 	var out: Array = []
 	for d in defs:
@@ -3154,6 +3541,7 @@ func _draw() -> void:
 	_draw_region_props(t)
 	if is_island:
 		_draw_palms(t)
+	_draw_set_lines(t)
 	_draw_ambient_particles(t)
 	_draw_splashes()
 	_draw_fisher(t)
@@ -4026,6 +4414,39 @@ func _draw_axe(o: Vector2) -> void:
 	_pixel_rect(Rect2(hand.x + 23.0, hand.y - 31.0, 5.0, 10.0), Color("#8a9fae"))
 
 
+## A set line is a bank post with a bell, a taut line and a float with a
+## READY / countdown bubble. Drawn in the world behind the fisher.
+func _draw_set_lines(t: float) -> void:
+	if open_water or is_island:
+		return
+	if not GameState.set_lines.has(region):
+		return
+	var post := Vector2(bank_w - 12.0, bank_top - 6.0)
+	var bob := sin(t * 2.2) * 2.0
+	var flt := Vector2(bank_w + 38.0, water_line + 8.0 + bob)
+	# post + bell
+	draw_line(post, post + Vector2(0.0, -26.0), GameTheme.WOOD_DARK, 4.0)
+	draw_line(post + Vector2(0.0, -24.0), post + Vector2(0.0, -18.0), GameTheme.WOOD, 2.0)
+	_draw_pixel_circle(post + Vector2(0.0, -30.0), 5.0, GameTheme.GOLD, 2.0)
+	_draw_pixel_circle(post + Vector2(0.0, -30.0), 2.0, GameTheme.WHEAT, 2.0)
+	# taut line and float
+	draw_line(post + Vector2(0.0, -20.0), flt, GameTheme.WHEAT, 1.5)
+	draw_line(flt + Vector2(0.0, 2.0), flt + Vector2(0.0, 8.0), GameTheme.WOOD_DARK, 2.0)
+	draw_rect(Rect2(flt.x - 4.0, flt.y - 5.0, 8.0, 6.0), GameTheme.BOBBER_RED)
+	draw_rect(Rect2(flt.x - 4.0, flt.y + 1.0, 8.0, 3.0), GameTheme.CREAM)
+	draw_arc(flt + Vector2(0.0, 1.0), 9.0, 0.0, TAU, 12, Color(GameTheme.WATER_SURFACE, 0.35), 1.0)
+	var ready := GameState.line_ready(region)
+	var left := GameState.line_seconds_left(region)
+	var txt := "READY" if ready else "%d:%02d" % [left / 60, left % 60]
+	var tw := PixFont.text_width(txt, 2)
+	var bx := clampf(flt.x + 18.0, 8.0, view_size.x - tw - 20.0)
+	var by := clampf(water_line - 44.0, 8.0, view_size.y - 40.0)
+	_ui_panel(Rect2(bx - 6.0, by - 4.0, tw + 12.0, 22.0),
+			Color(GameTheme.PANEL.darkened(0.15), 0.84),
+			GameTheme.GOLD if ready else GameTheme.PANEL_LIGHT)
+	PixFont.draw_text_shadowed(self, Vector2(bx, by), txt,
+			GameTheme.GOLD if ready else GameTheme.CREAM, Color("#050a12", 0.6), 2, 1, 1)
+
 func _draw_fisher(t: float) -> void:
 	var on_foot := not in_boat
 	var bob := sin(t * 2.0) * 1.2
@@ -4498,13 +4919,20 @@ func _draw_hud() -> void:
 	if not touch:
 		if is_island:
 			PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 120.0),
-					"G AXE - E OR CLICK CHOP - WALK WEST TO SAIL HOME",
+					"G AXE - E OR CLICK CHOP",
+					GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
+			PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 138.0),
+					"WALK WEST TO SAIL HOME",
 					GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
 		elif not open_water:
-			# Open water already has its own bottom hint; the fishing-spot
-			# line would collide with the boat/bait readout on the right.
+			# Keep this to short left-hand lines: the boat/bait readout lives
+			# in the same band on the right, and five more keys no longer fit
+			# on one line at the 960x540 base size.
 			PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 120.0),
-					"SPOTS 1-4 - R ROD - B BOAT - I INDEX - ESC PAUSE",
+					"1-4 SPOTS - R ROD - B BOAT",
+					GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
+			PixFont.draw_text_shadowed(self, Vector2(12.0, left_r.position.y + 138.0),
+					"P LINE - I INDEX - ESC PAUSE",
 					GameTheme.SUBTEXT, Color("#050a12", 0.6), 2, 1, 1)
 	var right_y := 112.0 if harvest_on else 52.0
 	var boat_txt := "BOAT: %s" % String(GameState.current_boat().get("name", "Old Raft")).to_upper()
@@ -4522,6 +4950,17 @@ func _draw_hud() -> void:
 		PixFont.draw_text_shadowed(self,
 				Vector2(view_size.x - PixFont.text_width(streak_txt, 2) - 12.0, right_y + 40.0),
 				streak_txt, GameTheme.LEAF, Color("#050a12", 0.6), 2, 1, 1)
+	# Set lines: slot count always, a blinking prompt once one is ready.
+	if GameState.trotline_slots() > 0 or GameState.line_slots_used() > 0:
+		var lines_txt := "LINES %d/%d" % [GameState.line_slots_used(), GameState.trotline_slots()]
+		PixFont.draw_text_shadowed(self,
+				Vector2(view_size.x - PixFont.text_width(lines_txt, 2) - 12.0, right_y + 60.0),
+				lines_txt, GameTheme.WHEAT, Color("#050a12", 0.6), 2, 1, 1)
+	if GameState.line_ready_any() and int(Time.get_ticks_msec() / 500) % 2 == 0:
+		var ready_txt := "LINE READY - P"
+		PixFont.draw_text_shadowed(self,
+				Vector2(view_size.x - PixFont.text_width(ready_txt, 2) - 12.0, right_y + 80.0),
+				ready_txt, GameTheme.GOLD, Color("#050a12", 0.6), 2, 1, 1)
 
 	_draw_event_banner(12.0)
 	_draw_arrival()
@@ -4535,15 +4974,16 @@ func _draw_hud() -> void:
 			ps -= 1
 		var tw := PixFont.text_width(txt, ps)
 		var mx := (view_size.x - tw) * 0.5
-		var my := view_size.y - 150.0
+		# Touch keeps a six-button row above CAST; lift world messages clear of it.
+		var my := view_size.y - (230.0 if touch else 150.0)
 		_ui_panel(Rect2(mx - 14.0, my - 8.0, tw + 28.0, 30.0), Color(GameTheme.PANEL.darkened(0.15), 0.72), Color(GameTheme.PANEL_LIGHT, 0.8))
 		PixFont.draw_text_shadowed(self, Vector2(mx, my), txt, GameTheme.CREAM,
 				Color("#050a12", 0.65), ps, 1, 1)
 
 	if state == STATE_WORLD:
-		var hint := "A/D WALK - AIM WITH MOUSE - SPACE OR CLICK TO CAST - I INDEX - B BOAT"
+		var hint := "A/D WALK - AIM WITH MOUSE - SPACE TO CAST - P LINE - ESC PAUSE"
 		if touch:
-			hint = "STICK TO WALK - TAP TO CAST - TAP INDEX FOR YOUR FISH"
+			hint = "STICK TO WALK - TAP TO CAST - TAP IDX FOR YOUR FISH"
 		if is_island:
 			hint = "G AXE - E CHOP - WALK WEST TO SAIL HOME - ESC FOR THE SHOP"
 			if touch:
@@ -4748,6 +5188,13 @@ func _draw_menu() -> void:
 				r.position.y + (r.size.y - 24.0) * 0.5), label,
 				GameTheme.CREAM, Color("#050a12", 0.6), 3, 1, 1)
 
+	var mc: Array = GameState.mastery_counts()
+	var rank_txt := "%s - %d PTS   GOLD %d" % [GameState.angler_title(),
+			GameState.angler_points(), int(mc[0])]
+	var rw := PixFont.text_width(rank_txt, 2)
+	PixFont.draw_text_shadowed(self, Vector2(px + (pw - rw) * 0.5, py + ph - 66.0), rank_txt,
+			GameTheme.GOLD, Color("#050a12", 0.6), 2, 1, 1)
+
 	var foot := "SPACE / CLICK TO START - 1-4 SPOTS"
 	var fw := PixFont.text_width(foot, 2)
 	PixFont.draw_text_shadowed(self, Vector2(px + (pw - fw) * 0.5, py + ph - 34.0), foot,
@@ -4776,6 +5223,30 @@ func _draw_harvest_award() -> void:
 	HarvestCards.draw_trophy(self, Rect2(px + 40.0, py + 48.0, pw - 80.0, 220.0))
 	PixFont.draw_text_centered(self, px + pw * 0.5, py + ph - 44.0,
 			"THE HARVEST QUEEN JOINS YOUR FLEET", GameTheme.WOOD_DARK, 2, 1)
+
+
+## Greedy 1x tag packer for the catch card. Five simultaneous tags are
+## wider than the 440px card, so allow at most two lines and let the caller
+## nudge the body down.
+func _pack_catch_tags(tags: Array[String], max_w: float) -> Array[String]:
+	var lines: Array[String] = []
+	var cur := ""
+	for tag in tags:
+		var trial := tag if cur == "" else cur + "   " + tag
+		if cur == "" or PixFont.text_width(trial, 1) <= max_w:
+			cur = trial
+		else:
+			lines.append(cur)
+			cur = tag
+	if cur != "":
+		lines.append(cur)
+	if lines.size() > 2:
+		# Pathological case: fold the overflow into the second line rather
+		# than draw off the card.
+		for i in range(2, lines.size()):
+			lines[1] += "   " + lines[i]
+		lines.resize(2)
+	return lines
 
 
 func _draw_catch_popup() -> void:
@@ -4826,21 +5297,36 @@ func _draw_catch_popup() -> void:
 		tags.append("HOT DEMAND +30%")
 	if GameState.event_active():
 		tags.append("2X EVENT")
+	if GameState.last_mastery_rank > 0:
+		tags.append("%s MASTERED +%d" % [AlmanacLib.rank_name(GameState.last_mastery_rank),
+				GameState.last_mastery_coins])
+	# Up to five tags can fire at once (perfect + daily + demand + event +
+	# mastery). They get one line when they fit, otherwise two at the small
+	# size, and the card body shifts down so nothing overlaps the fish.
+	var body_shift := 0.0
 	if not tags.is_empty():
+		var max_w := pw - 30.0
 		var tag_line := "   ".join(tags)
 		var tps := 2
-		if PixFont.text_width(tag_line, tps) > pw - 30.0:
+		if PixFont.text_width(tag_line, tps) > max_w:
 			tps = 1
-		PixFont.draw_text_centered(self, px + pw * 0.5, py + 198.0, tag_line,
-				GameTheme.GOLD, tps, 1)
+		if PixFont.text_width(tag_line, tps) <= max_w:
+			PixFont.draw_text_centered(self, px + pw * 0.5, py + 198.0, tag_line,
+					GameTheme.GOLD, tps, 1)
+		else:
+			body_shift = 12.0
+			var lines := _pack_catch_tags(tags, max_w)
+			for i in range(lines.size()):
+				PixFont.draw_text_centered(self, px + pw * 0.5, py + 196.0 + float(i) * 12.0,
+						String(lines[i]), GameTheme.GOLD, 1, 1)
 
 	var w_txt := "%.2f KG   WORTH %d COINS" % [catch_weight, catch_coins]
-	PixFont.draw_text_centered(self, px + pw * 0.5, py + 216.0, w_txt, GameTheme.WOOD_DARK, 2, 1)
+	PixFont.draw_text_centered(self, px + pw * 0.5, py + 216.0 + body_shift, w_txt, GameTheme.WOOD_DARK, 2, 1)
 
 	var d_txt := String(f.get("desc", ""))
-	_draw_wrapped_centered(px + pw * 0.5, py + 238.0, d_txt, Color("#5a4a55"), 2, pw - 40.0, 2)
+	_draw_wrapped_centered(px + pw * 0.5, py + 238.0 + body_shift, d_txt, Color("#5a4a55"), 2, pw - 40.0, 2)
 
-	var br := Rect2(px + pw * 0.5 - 110.0, py + 272.0, 220.0, 36.0)
+	var br := Rect2(px + pw * 0.5 - 110.0, py + 272.0 + body_shift, 220.0, 36.0)
 	var bh: bool = br.has_point(mouse_pos)
 	_ui_panel(br, GameTheme.LEAF if bh else Color("#5c8a52"), GameTheme.INK, 3.0)
 	var lab := "KEEP FISHING"

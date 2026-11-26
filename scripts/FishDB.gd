@@ -501,6 +501,29 @@ static var FISH := {
 		"weight_kg": [12.0, 35.0], "coin": 720, "catch_rate": 0.1,
 		"desc": "The island's old hoard, swimming in gold.",
 	},
+	# --- Angler Almanac species (v1.10). Six fish became sixty-eight. ---
+	"amber_dace": {
+		"id": "amber_dace", "name": "Amber Dace", "rarity": "Common", "region": "river",
+		"shape": "minnow", "pattern": "plain", "time": "day",
+		"palette": {"body": "#d9a24a", "belly": "#f6dfa8", "fin": "#a8742a", "eye": "#241a10"},
+		"weight_kg": [0.10, 0.35], "coin": 22, "catch_rate": 0.95,
+		"desc": "A sunlit amber dart that only rises in daylight.",
+	},
+	"moon_tench": {
+		"id": "moon_tench", "name": "Moonlit Tench", "rarity": "Rare", "region": "lake",
+		"shape": "long", "pattern": "bands", "time": "night",
+		"palette": {"body": "#4f6b5a", "belly": "#c8d8b8", "fin": "#2f4638", "eye": "#dfe8c8"},
+		"features": ["whiskers"],
+		"weight_kg": [1.2, 3.2], "coin": 130, "catch_rate": 0.4,
+		"desc": "A patient lake bottom-feeder that wakes under the moon.",
+	},
+	"gale_smelt": {
+		"id": "gale_smelt", "name": "Gale Smelt", "rarity": "Uncommon", "region": "ocean",
+		"shape": "minnow", "pattern": "stripes", "weather": "storm",
+		"palette": {"body": "#8fa8b8", "belly": "#e4eef2", "fin": "#53697a", "eye": "#101820"},
+		"weight_kg": [0.2, 0.9], "coin": 60, "catch_rate": 0.7,
+		"desc": "Silver and storm-tossed. Only bites in a thunderstorm.",
+	},
 	# --- Harvest Feast seasonal species (v1.9). Only bite while the event
 	# window is open; fish_pool() filters them by `season`. ---
 	"pumpkinseed": {
@@ -595,7 +618,8 @@ static func fish_pool(region: String, weather := "", night := false, season := "
 		out.append(f)
 	for fid in FISH.keys():
 		var roaming: Dictionary = FISH[fid]
-		if bool(roaming.get("anywhere", false)) and _season_match(roaming, season) 				and not out.has(roaming):
+		if bool(roaming.get("anywhere", false)) and _season_match(roaming, season) \
+				and not out.has(roaming):
 			out.append(roaming)
 	var filtered: Array[Dictionary] = []
 	for f in out:

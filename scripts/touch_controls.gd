@@ -199,24 +199,26 @@ func _build_buttons() -> void:
 		_add_button("interact", Rect2(action_c - Vector2(action_d, action_d) * 0.5,
 				Vector2(action_d, action_d)), "tap", "TALK", ["world"], true)
 
-	# small context buttons above the action button (min 48dp each)
+	# small context buttons above the action button (min 48dp each). Keep
+	# every utility in this one row: the old top-right INDEX/MENU pair sat
+	# on top of the boat/bait/set-line HUD as soon as the Harvest banner
+	# pushed that readout down.
 	var small_w := maxf(target, 62.0 * s)
 	var small_h := maxf(target, 44.0 * s)
 	var row_y := action_c.y - action_d * 0.5 - small_h - 10.0 * s
-	var row_x := w - mr - small_w * 3.0 - 8.0 * s * 2.0
+	var row_x := w - mr - small_w * 6.0 - 8.0 * s * 5.0
 	if mode == "fishing":
 		_add_button("rod", Rect2(row_x, row_y, small_w, small_h), "tap", "ROD", ["world"])
-		_add_button("boat", Rect2(row_x + small_w + 8.0 * s, row_y, small_w, small_h),
+		_add_button("boat", Rect2(row_x + (small_w + 8.0 * s), row_y, small_w, small_h),
 				"tap", "BOAT", ["world"])
 		_add_button("axe", Rect2(row_x + (small_w + 8.0 * s) * 2.0, row_y, small_w, small_h),
 				"tap", "AXE", ["world"])
-		# top-right buttons sit UNDER the coin/boat HUD text, not over it
-		var menu_w := maxf(target, 66.0 * s)
-		var top_y := mt + 100.0
-		_add_button("menu", Rect2(w - mr - menu_w, top_y, menu_w, maxf(target, 44.0 * s)),
+		_add_button("line", Rect2(row_x + (small_w + 8.0 * s) * 3.0, row_y, small_w, small_h),
+				"tap", "LINE", ["world"])
+		_add_button("index", Rect2(row_x + (small_w + 8.0 * s) * 4.0, row_y, small_w, small_h),
+				"tap", "IDX", ["world"])
+		_add_button("menu", Rect2(row_x + (small_w + 8.0 * s) * 5.0, row_y, small_w, small_h),
 				"tap", "MENU", ["world", "fishing", "reel"])
-		_add_button("index", Rect2(w - mr - menu_w * 2.0 - 8.0 * s, top_y, menu_w,
-				maxf(target, 44.0 * s)), "tap", "INDEX", ["world"])
 		# The four fishing spots run down the left edge. On short screens
 		# (landscape phones) there is not enough room above the thumb-stick,
 		# so use a single row instead of a column.
@@ -389,8 +391,8 @@ func _draw_controls() -> void:
 			label = action_label
 		if label != "":
 			var ps := 3
-			if PixFont.text_width(label, ps) > r.size.x - 10.0:
-				ps = 2
+			while ps > 1 and PixFont.text_width(label, ps) > r.size.x - 10.0:
+				ps -= 1
 			PixFont.draw_text_centered(_canvas, r.get_center().x,
 					r.get_center().y - float(ps) * 4.0, label, Color(1.0, 1.0, 1.0, 0.9), ps, 1)
 
@@ -421,5 +423,5 @@ func _draw_rotate_overlay() -> void:
 	var ps := 4 if view_size.x > 420.0 else 3
 	PixFont.draw_text_centered(_canvas, cx, cy + s * 1.2,
 			"ROTATE YOUR DEVICE", GameTheme.GOLD, ps, 1)
-	PixFont.draw_text_centered(_canvas, cx, cy + s * 1.2 + 26.0,
+	PixFont.draw_text_centered(_canvas, cx, cy + s * 1.2 + 40.0,
 			"COTTAGE CREEK IS PLAYED IN LANDSCAPE", GameTheme.SUBTEXT, 2, 1)

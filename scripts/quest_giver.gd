@@ -1,6 +1,8 @@
 class_name QuestGiver
 extends Interactable
 
+const AlmanacLib := preload("res://scripts/almanac_db.gd")
+
 ## Quest Giver: the town NPC with a quest board. Lists every quest with
 ## live progress and pays out coin rewards (GameState.claim_quest).
 
@@ -12,6 +14,9 @@ var scroll_pos := 0
 
 
 func prompt_label() -> String:
+	var d := GameState.daily_claimable_count()
+	if d > 0:
+		return "BOARD %d" % d
 	var n := GameState.quest_unclaimed_count()
 	return "QUEST BOARD" if n == 0 else "QUESTS %d" % n
 
@@ -36,6 +41,9 @@ func interact() -> void:
 		var event_l := UILib.label(body, "2X COIN EVENT: REWARDS ARE DOUBLED FOR %s" % GameState.event_time_text(),
 				13, GameTheme.GOLD)
 		event_l.custom_minimum_size = Vector2(0.0, 22.0)
+	_add_daily_section(body)
+	UILib.separator(body, 6.0)
+	UILib.label(body, "ALL QUESTS", 16, GameTheme.GOLD, true)
 	for q in GameState.visible_quests():
 		var done := bool(q.get("done", false))
 		var claimed := bool(q.get("claimed", false))
@@ -61,6 +69,48 @@ func interact() -> void:
 			TownUI.row_button(row, "CLAIM", _on_claim.bind(String(q.get("id", ""))), 100.0)
 	town.open_panel(s["root"])
 
+
+## The daily board sits above the quest list: one header with the streak
+## and three progress rows with CLAIM buttons when complete.
+func _add_daily_section(body: VBoxContainer) -> void:
+	GameState.ensure_daily()
+	var header := TownUI.row(body, 30.0)
+	var hl := UILib.label(header, "DAILY CHALLENGES", 16, GameTheme.GOLD, true)
+	hl.position = Vector2(12.0, 3.0)
+	var sl := UILib.label(header, "STREAK %d DAYS" % int(GameState.daily.get("streak", 0)), 12,
+			GameTheme.WHEAT)
+	sl.position = Vector2(300.0, 7.0)
+	var ids: Array = GameState.daily.get("ids", [])
+	for id_v in ids:
+		var id := String(id_v)
+		var def := AlmanacLib.daily_def(id)
+		var need := GameState.daily_need(id)
+		var prog := mini(GameState.daily_progress(id), need)
+		var claimed := GameState.daily_claimed(id)
+		var ready := prog >= need and not claimed
+		var row := TownUI.row(body, 52.0)
+		var title := UILib.label(row, String(def.get("label", "")).to_upper(), 14,
+				GameTheme.FAINT if claimed else GameTheme.CREAM, true)
+		title.position = Vector2(12.0, 3.0)
+		var status := "CLAIMED" if claimed else ("READY" if ready else "PROGRESS %d / %d" % [prog, need])
+		var prog_l := UILib.label(row, status, 12,
+				GameTheme.LEAF if ready else GameTheme.WHEAT)
+		prog_l.position = Vector2(12.0, 25.0)
+		var reward_l := UILib.label(row, "REWARD %d" % int(def.get("reward", 0)), 13,
+				GameTheme.GOLD, true)
+		reward_l.position = Vector2(300.0, 8.0)
+		if ready:
+			TownUI.row_button(row, "CLAIM", _on_claim_daily.bind(id), 100.0)
+
+
+func _on_claim_daily(id: String) -> void:
+	var gain := GameState.claim_daily(id)
+	if gain > 0:
+		GameState.play_sound("bell")
+		town.toast("DAILY CLAIMED +%d COINS" % gain)
+		_reopen()
+	else:
+		GameState.play_sound("buzz")
 
 func _on_claim(qid: String) -> void:
 	var token_quest := false

@@ -123,6 +123,37 @@ static var BOATS := {
 		"desc": "Queen of the fleet. Fastest hull, +45% value, and open-water rare fish bite 35% more.", "owned": false},
 }
 
+
+## Set lines (v1.10): bought tiers, each adding one line slot. The tier
+## itself lives in GameState.trotline_tier; these rows are shop data only.
+static var TROTLINES := {
+	"trotline_willow": {"id": "trotline_willow", "tier": 1, "name": "Willow Set Line",
+		"cost": 300, "slots": 1, "desc": "One hooked line you can leave in the water for 8 minutes.",
+		"owned": false},
+	"trotline_braided": {"id": "trotline_braided", "tier": 2, "name": "Braided Set Line",
+		"cost": 800, "slots": 2, "desc": "Two set lines at once. Check the bell when they are ready.",
+		"owned": false},
+	"trotline_rack": {"id": "trotline_rack", "tier": 3, "name": "Trotline Rack",
+		"cost": 1600, "slots": 3, "desc": "Three set lines. The patient angler fills the bucket.",
+		"owned": false},
+}
+
+## The row for an owned tier (0 = none).
+static func trotline_item(tier: int) -> Dictionary:
+	for id in TROTLINES.keys():
+		if int(TROTLINES[id].get("tier", 0)) == tier:
+			return TROTLINES[id]
+	return {}
+
+
+static func trotline_slots(tier: int) -> int:
+	return int(trotline_item(tier).get("slots", 0))
+
+
+## The next purchasable tier row, or {} at the top tier.
+static func trotline_next(tier: int) -> Dictionary:
+	return trotline_item(tier + 1)
+
 ## Rod tier from the hidden timing_window marker: 0 = Twig, 4 = Carbon.
 ## Crafted rod timings map through these same thresholds.
 static func rod_tier(rod_id: String) -> int:
@@ -228,4 +259,5 @@ static func _db(category: String) -> Dictionary:
 		"lanterns": return LANTERNS
 		"buckets": return BUCKETS
 		"boats": return BOATS
+		"trotlines": return TROTLINES
 		_: return {}

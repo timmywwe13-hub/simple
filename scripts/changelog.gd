@@ -6,9 +6,22 @@ extends RefCounted
 ## list. Bump VERSION and add a new entry on every release; the menu shows
 ## a "!" badge until the player opens the screen once (GameState.seen_version).
 
-const VERSION := "1.9.2"
+const VERSION := "1.10"
 
 const ENTRIES := [
+	{
+		"version": "1.10",
+		"title": "THE ANGLER ALMANAC",
+		"items": [
+			"SPECIES MASTERY - every species tracks catches toward Bronze (5), Silver (15) and Gold (40). Each medal pays once: 25, 100 and 300 coins. Gold species add +0.5% to every sale, up to +15%.",
+			"ANGLER RANK - 204 mastery points across 68 species climb Novice, Apprentice, Angler, Veteran, Master and Legend. Your rank, medal counts and sale bonus show on Stats, the Index and the new Almanac.",
+			"DAILY CHALLENGE BOARD - three challenges a day from the Almanac table, with streak-scaled payouts and a 150 coin completion bonus. Claim them at the Quest Board in Town.",
+			"SET LINES - leave a line in pond, river, lake or Deep Sea water for 8 minutes. Willow (300), Braided (800) and the Trotline Rack (1,600) hold 1, 2 or 3 lines, with a bell and a READY timer over the float.",
+			"THE ANGLER ALMANAC - a new full-screen reference with rank progress, all 68 species and their medals, today's board, lifetime records and three daily field notes. Open it from the menu or the pause screen.",
+			"THREE NEW FISH - Amber Dace (river, day), Moonlit Tench (lake, night) and Gale Smelt (Deep Sea, storm). Sixty-eight species and eight new quests.",
+			"QUALITY OF LIFE - selling a whole bucket now counts every fish toward sell quests and dailies, the old weather quest is renamed Rain Chaser, and set lines never break your catch streak.",
+		],
+	},
 	{
 		"version": "1.9.2",
 		"title": "A FULL TABLE KEEPS PAYING",

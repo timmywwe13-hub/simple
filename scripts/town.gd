@@ -440,6 +440,14 @@ func _draw_hud() -> void:
 				12.0, row, GameTheme.GOLD)
 		row += 40.0
 	_hud_line("BUCKET %d/%d" % [GameState.inventory_count(), GameState.bucket_capacity()], 12.0, row, UILib.CREAM)
+	row += 38.0
+	GameState.ensure_daily()
+	var daily_done := (GameState.daily.get("claimed", []) as Array).size()
+	var daily_ready := GameState.daily_claimable_count()
+	var daily_txt := "DAILIES %d/3" % daily_done
+	if daily_ready > 0:
+		daily_txt += " - %d READY" % daily_ready
+	_hud_line(daily_txt, 12.0, row, GameTheme.GOLD if daily_ready > 0 else UILib.CREAM)
 	var hint := "WASD / ARROWS - WALK    E - INTERACT    U - WHAT'S NEW    ESC - CLOSE"
 	if touch != null and touch.enabled:
 		hint = "DRAG THE STICK TO WALK - TAP TALK NEAR A BUILDING - CLOSE TO LEAVE A SHOP"

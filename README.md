@@ -38,6 +38,8 @@ godot --headless --path . --export-release Web build/web/index.html
 | Chop a palm / craft (island) | `E` or click near a palm; `Escape` opens the shop |
 | Switch fishing spot | `1`–`4` |
 | Open the Fish Index | `I` (from the menu or right on the water) |
+| Set / collect a set line (bank) | `P` (or the touch `LINE` button) |
+| Open the Angler Almanac | menu or pause button `ALMANAC` |
 | Pause / back | `Escape` (pauses while fishing; closes menus) |
 | Stats and sound | menu button `STATS & SOUND` |
 | Settings | menu or pause button `SETTINGS`, or `F11` for fullscreen |
@@ -52,7 +54,7 @@ godot --headless --path . --export-release Web build/web/index.html
 context buttons: an analog stick with a dead zone for walking and sailing,
 tap the water to aim, and a large action button that becomes CAST / HOOK /
 REEL / HOLD / CHOP. Only the buttons you need right now stay on screen
-(rod, boat, axe, spots `1`–`4`, index and menu), sized for thumbs and inset for notches and rounded corners. Multi-touch works: walk with the
+(rod, boat, axe, line, spots `1`–`4`, index and menu), sized for thumbs and inset for notches and rounded corners. Multi-touch works: walk with the
 left thumb while fishing with the right. Set **TOUCH UI** to `ON` to use the
 controls on a desktop, or `OFF` to hide them on a tablet; `AUTO` follows the
 device.
@@ -69,6 +71,9 @@ device.
 8. **Coconut Isle** — sail east from the Deep Sea to a tropical beach. Buy the axe in the shop, chop the palms for coconuts (each palm regrows in 20 minutes, with a timer over the stump), then spend the coconuts in **Coconut Isle Crafting** to build rods 25% better than every shop rod. The isle's own fish only bite with bait.
 9. **The Lucky Lily** — walk to the toy-coin riverboat in Town and press `E`. Pick a stake from 10 to 500 coins, then call **Skipper's Coin**, pick a **Pearl Shell**, or spin the **Lucky Catch** reel. Every payout includes the returned stake; the ledger tracks your session and lifetime results.
 10. **The Harvest Feast (Nov 22 – Dec 1)** — the whole world turns autumn and a sixth Town walk-up appears: the long table. Catch the five seasonal fish, donate fish to grow the table through four stages, and spend Feast tokens on 3-card packs. A free pack lands every event day. Collect all 20 cards to be awarded **The Harvest Queen**, a gilded hull with the Sea Trawler's stats. Packs and earning close on Dec 1 at 23:59; the album, spares, trophy and boat stay forever, and a 19/20 near-miss finishes next November.
+11. **Species mastery** — every species counts toward Bronze (5 catches), Silver (15) and Gold (40). Each medal pays once (25 / 100 / 300 coins), and each Gold species adds +0.5% to every sale up to +15%. Your Angler Rank totals 204 mastery points across 68 species: Novice, Apprentice, Angler, Veteran, Master, Legend.
+12. **Daily challenges and set lines** — the Quest Board in Town carries three daily challenges with streak-scaled payouts and a 150-coin completion bonus. Buy a Willow (300), Braided (800) or Trotline Rack (1,600) and press `P` on a bank to leave a line for eight minutes; collect one fish when the bell rings. Lines never break your catch streak.
+13. **The Angler's Almanac** — a full-screen reference from the menu or pause screen: rank progress, all 68 species and their medals, today's board, lifetime records and three rotating field notes.
 
 **Gambling is toy-coins only.** The Lucky Lily never takes real money, never sells chips and cannot be topped up with a purchase. Its fixed odds carry a house edge, and casino coins are kept separate from fish sales and the 2X coin event.
 
@@ -100,7 +105,8 @@ in IndexedDB.
 ```
 res://main.tscn          # Main scene (Node2D)
 res://scripts/main.gd    # Game loop: cast/bite/reel, rendering, UI screens
-res://scripts/GameState.gd # Save/load, inventory, index, gear, quests, audio SFX
+res://scripts/GameState.gd # Save/load, inventory, index, gear, quests, mastery, dailies, lines, audio SFX
+res://scripts/almanac_db.gd # Mastery thresholds, rank titles, daily table, field notes
 res://scripts/casino_db.gd # Lucky Lily fixed odds, payouts and reel stops
 res://scripts/casino.gd    # Lucky Lily riverboat art and toy-coin panel
 res://scripts/FishDB.gd  # All fish data + regional tables
@@ -114,6 +120,16 @@ res://scripts/ui_lib.gd  # Tiny code-only UI toolkit
 res://scripts/touch_controls.gd # On-screen touch controls for phones/tablets
 res://scripts/fish_art.gd # Procedural pixel-ish fish drawing (shared)
 ```
+
+## Updates (v1.10)
+
+- **The Angler Almanac** - a new full-screen reference from the menu or pause screen: rank progress, all **68 species** with their medals, today's daily board, lifetime records and three daily field notes
+- **Species mastery** - Bronze (5), Silver (15) and Gold (40) per species pay 25 / 100 / 300 coins once each. Gold species add +0.5% to every fish sale, capped at +15%
+- **Angler Rank** - 204 mastery points climb **Novice, Apprentice, Angler, Veteran, Master and Legend**. Your rank, medal counts and sale bonus appear on the main menu, Stats, the Index and the Almanac
+- **Daily Challenge Board** - three challenges a day at the Quest Board, with payouts scaled by your completion streak and a **150-coin** bonus for finishing all three. The Town HUD tracks `DAILIES n/3`
+- **Set Lines** - Willow (300), Braided (800) and Trotline Rack (1,600) hold 1, 2 or 3 passive lines. Press `P` on a pond, river, lake or Deep Sea bank, then come back in **8 minutes**; a bell and a READY timer float over the line. A full bucket leaves the fish waiting, and lines never break your catch streak
+- **Three new fish and eight new quests** - **Amber Dace** (river, day), **Moonlit Tench** (lake, night) and **Gale Smelt** (Deep Sea, storm), plus quests for line-setting, mastery medals, daily streaks and the new species
+- **Quality of life** - selling a whole bucket counts every fish toward sell quests and dailies, the old weather quest is renamed **Rain Chaser**, and the Index and Stats now show medals and the Gold sale bonus
 
 ## Updates (v1.9.2)
 
