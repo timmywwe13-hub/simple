@@ -1513,6 +1513,12 @@ func record_catch(fish_id: String, weight: float, region: String, night := false
 	inventory.append({"fish_id": fish_id, "weight": weight, "region": region,
 		"caught_at": Time.get_ticks_msec(), "perfect": perfect})
 	total_caught += 1
+	# Count the first catch of each real-world day, so the Almanac's
+	# "days fished" record reflects actual play instead of staying at zero.
+	var catch_day := _today_key()
+	if int(stats.get("last_fish_day", 0)) != catch_day:
+		stats["last_fish_day"] = catch_day
+		stats["days_fished"] = int(stats.get("days_fished", 0)) + 1
 	# A set line is patience, not a hot hand: it never bumps the sale streak.
 	if not via_line:
 		stats["current_streak"] = int(stats.get("current_streak", 0)) + 1

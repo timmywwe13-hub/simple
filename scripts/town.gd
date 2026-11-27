@@ -180,7 +180,9 @@ func _process(dt: float) -> void:
 	if touch != null:
 		touch.set_context("panel" if active_panel != null else "world")
 	if active_panel != null:
-		if Input.is_action_just_pressed("ui_cancel") or _touch_tap("menu"):
+		var esc := Input.is_action_just_pressed("ui_cancel")
+		var consumed: bool = esc and active_panel.has_method("handle_escape") and active_panel.handle_escape()
+		if not consumed and (esc or _touch_tap("menu")):
 			close_panel()
 		queue_redraw()
 		return

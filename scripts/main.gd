@@ -83,8 +83,13 @@ var arrival_name := ""
 var arrival_sub := ""
 var arrival_glyph := "pond"
 var arrival_t := 0.0
-## Start-menu keyboard/gamepad selection.
+## Start-menu keyboard/gamepad selection. The mouse only changes it when
+## the pointer actually moves, so a cursor resting over the panel can never
+## hijack SPACE/ENTER and launch the wrong screen.
 var menu_sel := 0
+var menu_mouse := Vector2.ZERO
+var menu_mouse_ready := false
+var menu_keyboard := true
 ## Fish Index 2.0 selection.
 var index_selected := -1
 var index_shown_ids: Array[String] = []
@@ -923,15 +928,28 @@ func _update_menu() -> void:
 	menu_buttons = _menu_button_rects()
 	var up := Input.is_action_just_pressed("move_up") or Input.is_action_just_pressed("ui_up")
 	var down := Input.is_action_just_pressed("move_down") or Input.is_action_just_pressed("ui_down")
+	# Hover follows the pointer for the highlight, but only a real mouse move
+	# may take over the selection. Otherwise a cursor parked over HARVEST or
+	# SETTINGS at launch would make SPACE open that screen instead of FISH.
+	# Once the keyboard is used, the highlight follows the keyboard until the
+	# pointer moves again, so the lit row always matches what SPACE activates.
+	var moved := menu_mouse_ready and mouse_pos.distance_to(menu_mouse) > 0.5
+	menu_mouse = mouse_pos
+	menu_mouse_ready = true
+	if moved:
+		menu_keyboard = false
 	if up or down:
+		menu_keyboard = true
 		menu_sel = (menu_sel + (-1 if up else 1) + menu_buttons.size()) % menu_buttons.size()
 		GameState.play_sound("ui")
 	hover_button = -1
-	for i in range(menu_buttons.size()):
-		var b := menu_buttons[i]["rect"] as Rect2
-		if b.has_point(mouse_pos):
-			hover_button = i
-			menu_sel = i
+	if not menu_keyboard:
+		for i in range(menu_buttons.size()):
+			var b := menu_buttons[i]["rect"] as Rect2
+			if b.has_point(mouse_pos):
+				hover_button = i
+				if moved:
+					menu_sel = i
 	if hover_button < 0:
 		hover_button = clampi(menu_sel, 0, menu_buttons.size() - 1)
 	if not _pressed():

@@ -2,9 +2,9 @@
 
 A simple, polished 2D fishing game with a collection-and-progression loop, built in **Godot 4.7** (GDScript, Canvas 2D rendering, no external assets).
 
-**Play in your browser:** [cottage-creek-fishing.surge.sh](https://cottage-creek-fishing.surge.sh/) · [cottage-creek.surge.sh](https://cottage-creek.surge.sh/) · [cottagecreek.surge.sh](https://cottagecreek.surge.sh/) · [creekfishing.surge.sh](https://creekfishing.surge.sh/)
+**Play in your browser:** [cottage-creek-fishing-v110.surge.sh](https://cottage-creek-fishing-v110.surge.sh/) · [cottage-creek-v110.surge.sh](https://cottage-creek-v110.surge.sh/) · [cottagecreek-v110.surge.sh](https://cottagecreek-v110.surge.sh/) · [creekfishing-v110.surge.sh](https://creekfishing-v110.surge.sh/)
 **GitHub Pages mirror:** [timmywwe13-hub.github.io/simple/build/web](https://timmywwe13-hub.github.io/simple/build/web/)
-**Seeing an old cached build?** Open [reset.html](https://cottage-creek-fishing.surge.sh/reset.html) once, then reload the game.
+**Seeing an old cached build?** Open [reset.html](https://cottage-creek-fishing-v110.surge.sh/reset.html) once, then reload the game.
 
 ## How to run
 
@@ -313,20 +313,24 @@ Live at <https://timmywwe13-hub.github.io/simple/build/web/>.
 
 ### Surge
 
-The same committed build is mirrored on four Surge subdomains:
+The same committed build is mirrored on four current Surge subdomains:
 
-- <https://cottage-creek-fishing.surge.sh/>
-- <https://cottage-creek.surge.sh/>
-- <https://cottagecreek.surge.sh/>
-- <https://creekfishing.surge.sh/>
+- <https://cottage-creek-fishing-v110.surge.sh/>
+- <https://cottage-creek-v110.surge.sh/>
+- <https://cottagecreek-v110.surge.sh/>
+- <https://creekfishing-v110.surge.sh/>
+
+The older non-versioned subdomains (`cottage-creek-fishing.surge.sh` and the
+three mirrors) belong to a different Surge account and still serve a previous
+build; they cannot be updated from this account.
 
 Authenticate once with `npx surge login`, then publish after a rebuild:
 
 ```bash
-npx surge build/web https://cottage-creek-fishing.surge.sh
-npx surge build/web https://cottage-creek.surge.sh
-npx surge build/web https://cottagecreek.surge.sh
-npx surge build/web https://creekfishing.surge.sh
+npx surge build/web https://cottage-creek-fishing-v110.surge.sh
+npx surge build/web https://cottage-creek-v110.surge.sh
+npx surge build/web https://cottagecreek-v110.surge.sh
+npx surge build/web https://creekfishing-v110.surge.sh
 ```
 
 For CI, set `SURGE_TOKEN` instead of logging in interactively. Surge writes a

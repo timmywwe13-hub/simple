@@ -26,24 +26,25 @@ Build: Godot 4.7.2 Web export. Version `1.10` / `THE ANGLER ALMANAC`.
 | 20 | Pause | Escape pause shows RESUME, SETTINGS, WHAT'S NEW, ALMANAC, MAIN MENU at 420x468; ALMANAC opens, back returns to pause, main menu releases pause. | PASS | `qa_pause.png` |
 | 21 | Menu | Eight buttons plus rank line (`LEGEND - 204 PTS  GOLD 68`) fit the panel; START/INDEX/SHOP/HARVEST/STATS/SETTINGS/WHAT'S NEW/ALMANAC hit targets verified. | PASS | `qa_menu.png`, click tests |
 | 22 | Save/reload | Cheat then reload keeps mastery, rank, 68 Gold, coins and set lines; a second load does not duplicate medal coins. | PASS | `qa_save_runtime.png`, `qa_save_after2.png` |
-| 23 | Cache reset | `/reset.html` clears the PWA/service-worker cache; current worker tag is `ccf-d0e309784f3e` and a reload picks up the new PCK. | PASS | HTTP checks; PWA reload |
+| 23 | Cache reset | `/reset.html` clears the PWA/service-worker cache; current worker tag is `ccf-673e0f3a81cd` and a reload picks up the new PCK. | PASS | HTTP checks; PWA reload |
 | 24 | Browsers | Chromium 158 (Chrome engine) and Edge 158 desktop + 844x390 touch pass with no console/page errors. | PASS | `qa_edge.png`, `qa_edge_mobile.png`, console logs |
 
 ## Export fingerprint
 
-- `index.pck`: 2,090,964 bytes
-- SHA-256: `D64D4FCDA8750175D0724F57E611488FEC143423A65BED7165D21DC608573B34`
-- PWA cache tag: `ccf-d0e309784f3e`
-- QA artifacts live in `C:/Users/Conner/Downloads/simple2_qa`, outside the Godot project, so they are not packed into the PCK.
+- `index.pck`: 2,091,812 bytes
+- SHA-256: `ED62B834B78C583C53199195A3528E0808736A6002EBEEF387FED0285F78BE7B`
+- PWA cache tag: `ccf-673e0f3a81cd`
+- QA artifacts were kept outside the Godot project, so they are not packed into the PCK.
 
 ## Notes
 
 - Tests were run headless against the exported build served from `http://127.0.0.1:8123`.
 - The 8-minute wait was verified from the live countdown; the ready/collect/full-bucket branches were exercised by the deterministic smoke harness rather than by waiting eight real minutes.
 - The temporary smoke harness and its fixtures were removed after the run so they cannot leak into `index.pck`.
+
 ## Live v1.10 endpoints
 
-All four return HTTP 200, the same `index.pck` (2,090,964 bytes / `D64D4FCDA8750175D0724F57E611488FEC143423A65BED7165D21DC608573B34`), the same cache tag `ccf-d0e309784f3e`, and a working `/reset.html`:
+All four return HTTP 200, the same `index.pck` (2,091,812 bytes / `ED62B834B78C583C53199195A3528E0808736A6002EBEEF387FED0285F78BE7B`), the same cache tag `ccf-673e0f3a81cd`, and a working `/reset.html`:
 
 - <https://cottage-creek-fishing-v110.surge.sh>
 - <https://cottage-creek-v110.surge.sh>

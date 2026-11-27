@@ -246,18 +246,24 @@ class Board extends Control:
 				reveal_t = 1.0
 			else:
 				reveal_t = minf(1.0, reveal_t + dt * 1.35)
-			if reveal_overlay != null:
+			if is_instance_valid(reveal_overlay):
 				reveal_overlay.queue_redraw()
-		if award_overlay != null:
+		if is_instance_valid(award_overlay):
 			award_t = 1.0 if GameState.reduce_motion() else minf(1.0, award_t + dt * 2.2)
 			award_overlay.queue_redraw()
-		if Input.is_action_just_pressed("ui_cancel"):
-			if award_overlay != null:
-				_close_award()
-			elif reveal_overlay != null:
-				_close_reveal()
-			else:
-				_close()
+
+	## Called by the town before it closes a panel. Returns true when ESC was
+	## consumed by an overlay, so ESC backs out one step instead of dumping
+	## the player out of the whole board mid-reveal.
+	func handle_escape() -> bool:
+		if is_instance_valid(award_overlay):
+			_close_award()
+			return true
+		if is_instance_valid(reveal_overlay):
+			_close_reveal()
+			return true
+		return false
+
 	func _close() -> void:
 		if on_close.is_valid():
 			on_close.call()
@@ -270,6 +276,8 @@ class Board extends Control:
 			c.queue_free()
 
 	func _build() -> void:
+		reveal_overlay = null
+		award_overlay = null
 		_clear(self)
 		var dim := ColorRect.new()
 		var dc := UILib.DIM
@@ -493,13 +501,13 @@ class Board extends Control:
 		var sel := donate_list.get_selected_items()
 		if sel.is_empty():
 			status_text = "SELECT A FISH FIRST."
-			_build_donate()
+			_build()
 			return
 		var res := GameState.donate_fish(int(sel[0]))
 		if not bool(res.get("ok", false)):
 			status_text = "CAN'T DONATE THAT RIGHT NOW."
 			GameState.play_sound("buzz")
-			_build_donate()
+			_build()
 			return
 		status_text = "DONATED FOR %d TOKENS - TABLE STAGE %d" % [int(res.get("tokens", 0)),
 				int(res.get("stage", 0))]
@@ -515,7 +523,7 @@ class Board extends Control:
 			_build()
 			_open_reveal(pack)
 			return
-		_build_donate()
+		_build()
 
 	func _build_album() -> void:
 		var closed := not GameState.harvest_season_open()
@@ -546,8 +554,8 @@ class Board extends Control:
 		for i in range(HarvestCards.ALL_IDS.size()):
 			var cid := String(HarvestCards.ALL_IDS[i])
 			var slot := Control.new()
-			slot.custom_minimum_size = Vector2(64.0, 90.0)
-			slot.size = Vector2(64.0, 90.0)
+			slot.custom_minimum_size = Vector2(64.0, 78.0)
+			slot.size = Vector2(64.0, 78.0)
 			slot.mouse_filter = Control.MOUSE_FILTER_STOP
 			slot.tooltip_text = String(HarvestCards.card(cid).get("name", cid))
 			grid.add_child(slot)
@@ -639,8 +647,10 @@ class Board extends Control:
 			HarvestCards.draw_trophy(art, Rect2(Vector2.ZERO, art.size))
 		)
 		_lab(content, "THE HARVEST QUEEN", 24, UILib.GOLD, Vector2(0.0, 276.0), 820.0)
-		_lab(content, "Awarded automatically at 20 / 20 cards. The best hull in the creek: speed 260, value +45%, open-water rare bites +35%. Saved as a normal owned boat, so she is sailable from any dock.",
+		var trophy_desc := _lab(content, "Awarded automatically at 20 / 20 cards.\nThe best hull in the creek: speed 260, value +45%, open-water rare bites +35%.\nSaved as a normal owned boat, so she is sailable from any dock.",
 				14, UILib.SUBTEXT, Vector2(0.0, 306.0), 820.0)
+		trophy_desc.size = Vector2(820.0, 72.0)
+		trophy_desc.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 
 	func _open_reveal(res: Dictionary) -> void:
 		if String(res.get("error", "")) == "closed":
@@ -663,7 +673,7 @@ class Board extends Control:
 		_build_reveal()
 
 	func _build_reveal() -> void:
-		if reveal_overlay != null:
+		if is_instance_valid(reveal_overlay):
 			reveal_overlay.queue_free()
 		reveal_overlay = Control.new()
 		reveal_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -728,6 +738,7 @@ class Board extends Control:
 		var awarded := bool(reveal.get("awarded", false))
 		reveal = {}
 		reveal_t = 0.0
+		reveal_overlay = null
 		_build()
 		if awarded:
 			_show_award()
@@ -762,7 +773,7 @@ class Board extends Control:
 		GameState.play_sound("fanfare")
 
 	func _close_award() -> void:
-		if award_overlay != null:
+		if is_instance_valid(award_overlay):
 			award_overlay.queue_free()
-			award_overlay = null
+		award_overlay = null
 		_build()
